@@ -1,0 +1,141 @@
+# Docker Compose configuration for Claude Code Mobile Backend
+# Provides both development and production deployment options
+
+version: '3.8'
+
+services:
+  # FastAPI Backend Service
+  claude-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-production}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Application settings
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
+      - APP_NAME=Claude Code Mobile Backend
+      - APP_VERSION=1.0.0
+
+      # Server configuration
+      - HOST=0.0.0.0
+      - PORT=8000
+      - WORKERS=${WORKERS:-4}
+
+      # CORS settings for mobile clients
+      - CORS_ORIGINS=${CORS_ORIGINS:-["https://localhost:*","capacitor://localhost"]}
+      - CORS_ALLOW_CREDENTIALS=true
+
+      # Claude Code SDK settings
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY:-}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-3-5-sonnet-20241022}
+      - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-8192}
+      - CLAUDE_TEMPERATURE=${CLAUDE_TEMPERATURE:-0.7}
+      - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-60}
+
+      # Session management
+      - MAX_SESSIONS_PER_USER=${MAX_SESSIONS_PER_USER:-10}
+      - SESSION_TIMEOUT=${SESSION_TIMEOUT:-3600}
+      - MESSAGE_HISTORY_LIMIT=${MESSAGE_HISTORY_LIMIT:-100}
+
+      # Networking mode (http or ziti for Phase 2)
+      - NETWORKING_MODE=${NETWORKING_MODE:-http}
+
+      # Security settings
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+
+    volumes:
+      # Development: mount source code for live reload
+      - "${PWD}/app:/app/app:${VOLUME_MODE:-ro}"
+      # Production: persistent logs
+      - "${LOG_DIR:-./logs}:/app/logs"
+      # Phase 2: OpenZiti identity files
+      - "${ZITI_IDENTITY_DIR:-./ziti}:/app/ziti:ro"
+
+    networks:
+      - claude-network
+
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-1G}
+          cpus: ${CPU_LIMIT:-1.0}
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    restart: unless-stopped
+
+  # Redis for production session storage (Phase 2)
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - production
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    networks:
+      - claude-network
+    restart: unless-stopped
+    # Disable Redis in development by default
+
+  # Nginx reverse proxy for production (Optional)
+  nginx:
+    image: nginx:alpine
+    profiles:
+      - production
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - "${SSL_CERT_DIR:-./ssl}:/etc/ssl/certs:ro"
+    depends_on:
+      - claude-backend
+    networks:
+      - claude-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  claude-network:
+    driver: bridge
+    name: claude-mobile-network
+
+# Development override (docker-compose.override.yml)
+# This file is automatically loaded in development
+---
+# Development configuration
+services:
+  claude-backend:
+    build:
+      target: development
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=["*"]
+    volumes:
+      # Development: live reload with read-write access
+      - "${PWD}/app:/app/app:rw"
+    ports:
+      - "8000:8000"

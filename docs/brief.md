@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-**Project Concept:** A cross-platform SwiftUI Claude Code client for iPad, macOS, and VisionOS that provides secure, private access to Claude Code functionality through innovative zero-trust networking architecture.
+**Project Concept:** A cross-platform SwiftUI Claude Code client for iPad, macOS, and VisionOS that provides secure, private access to Claude Code SDK functionality through innovative zero-trust networking architecture.
 
 **Primary Problem:** Developers need secure, mobile-native access to Claude Code capabilities without exposing their backend services to network vulnerabilities or complex networking configurations.
 
@@ -26,20 +26,12 @@ Developers using Claude Code face fundamental architectural barriers when attemp
 - **Claude Code SDK Platform Limitations:** The `claude_code_sdk` Python library requires server-side execution with file system access, bash command execution (`allowed_tools=["Bash", "Read", "WebSearch"]`), and persistent session management through `ClaudeSDKClient` context managers
 - **Mobile Platform Restrictions:** iOS sandbox architecture prevents direct Claude Code SDK execution, bash command access, and local file system manipulation required by Claude's toolchain (`CLINotFoundError` when attempting local installation)
 - **Networking Security Challenges:** Traditional client-server architectures require exposing Claude Code backends through port forwarding, reverse proxies, or VPN solutions that create significant attack vectors
-- **Authentication Complexity:** Claude Code SDK requires Anthropic API credentials and CLI installation (`npm install -g @anthropic-ai/claude-code`) that must be securely managed without client-side exposure
 
-**Technical Impact Metrics:**
-
-- **Development Context Loss:** Mobile sessions lose access to project-wide code analysis, multi-file refactoring (`asyncio.gather()` concurrent operations), and conversational development history (`max_turns` persistence)
-- **Security Surface Area:** Traditional networking approaches require opening ports (typically 8000-8080), configuring firewalls, SSL certificate management, and expose FastAPI endpoints to internet
-- **Performance Degradation:** VPN-based solutions add 50-200ms latency to interactive coding sessions, breaking real-time streaming response experience (`async for message in client.receive_response()`)
-- **Infrastructure Overhead:** Self-hosted solutions require Docker containerization, reverse proxy configuration (nginx/Traefik), SSL certificate automation, and ongoing security patch management
 
 **Why Existing Technical Solutions Fall Short:**
 
 - **Direct API Integration Limitations:** Raw Anthropic API lacks Claude Code SDK's specialized toolchain, persistent conversation context, and configured agent behaviors (`ClaudeCodeOptions` with `system_prompt` and `allowed_tools`)
 - **Web-based Approaches:** Browser-based solutions cannot access local file systems, execute bash commands, or maintain the stateful development sessions that Claude Code SDK provides
-- **Container/VM Solutions:** Docker-based remote development environments introduce latency, resource overhead, and complex networking that defeats mobile productivity goals
 - **Traditional Mobile IDE Limitations:** Existing mobile development tools lack Claude's advanced reasoning, multi-turn project understanding, and specialized coding assistant capabilities
 
 **Technical Architecture Requirements:**
@@ -51,9 +43,7 @@ The solution requires bridging three distinct architectural domains:
 
 **Current Technical Gaps:**
 - No existing FastAPI + Claude Code SDK integration patterns documented
-- OpenZiti Python SDK integration with async applications requires custom implementation
 - iOS Swift SDK for OpenZiti needs mobile-optimized authentication flows
-- Real-time streaming (`async for msg in client.receive_response()`) over zero-trust networks needs performance validation
 
 ---
 
@@ -196,67 +186,11 @@ Developer Time Cost Analysis:
 
 ## Goals & Success Metrics (Open Source + Monetization Model)
 
-### **Open Source Community Goals**
-
-**Community Growth Objectives:**
-- **GitHub Stars:** 1,000+ within 12 months (community interest validation)
-- **Active Installations:** 500+ self-hosted deployments (actual usage proof)
-- **Contributing Developers:** 15+ community contributors (sustainable development)
-- **Issue Resolution:** <7 day average response time (community support quality)
-
 **Technical Quality Objectives:**
 - **Cross-Platform Compatibility:** SwiftUI app working on iPad, macOS, iPhone, VisionOS
 - **API Completeness:** 90%+ Claude Code SDK feature parity through FastAPI wrapper
 - **Documentation Quality:** Complete setup guides, API docs, troubleshooting resources
 - **Test Coverage:** >80% backend test coverage, iOS UI test coverage for core flows
-
-### **Hosted Service Business Objectives**
-
-**Sustainability Metrics:**
-- **Subscriber Growth:** 50 users by month 6, 200 users by month 12
-- **Monthly Recurring Revenue:** $250 (month 6) → $1,000 (month 12)
-- **Infrastructure Coverage:** Revenue covers hosting costs + 20% maintenance buffer
-- **Customer Satisfaction:** <10% monthly churn rate, >4.0/5.0 support rating
-
-**Service Quality Metrics:**
-- **Uptime:** 99.5% service availability (excludes planned maintenance)
-- **Performance:** <100ms median API response time for Claude Code queries
-- **Security:** Zero security incidents, SOC2-equivalent operational practices
-- **Support Quality:** <24 hour support response time, comprehensive FAQ coverage
-
-### **User Success Metrics**
-
-**Community User Success:**
-- **Setup Success Rate:** >90% successful self-hosted deployment following documentation
-- **Feature Usage:** >70% of installations use mobile app at least weekly
-- **Workflow Integration:** Users report successful mobile-desktop Claude Code context transitions
-- **Community Health:** Active discussions, feature requests, and collaborative problem-solving
-
-**Hosted Service User Success:**
-- **Onboarding:** <5 minute device enrollment and first successful Claude Code query
-- **Value Realization:** Users report mobile Claude Code usage within 48 hours of signup
-- **Retention:** >80% of subscribers active after 3 months
-- **Usage Growth:** Increasing mobile Claude Code session frequency over time
-
-### **Key Performance Indicators (KPIs)**
-
-**Technical KPIs:**
-- **API Response Time:** P95 < 200ms for Claude Code queries
-- **Mobile App Performance:** <3 second app launch time, smooth conversation scrolling
-- **Cross-Device Sync:** <5 second conversation state sync between desktop CLI and mobile
-- **Error Rate:** <2% failed Claude Code queries due to infrastructure issues
-
-**Community KPIs:**
-- **Contribution Rate:** Monthly code/documentation contributions from community
-- **Issue Resolution:** Average time from bug report to fix deployment
-- **Feature Velocity:** Number of community-requested features implemented per quarter
-- **Documentation Quality:** Community-reported setup success rate and clarity feedback
-
-**Business KPIs:**
-- **Customer Acquisition Cost:** Organic growth through community and word-of-mouth
-- **Lifetime Value:** Average subscription duration and upgrade/downgrade patterns
-- **Infrastructure Efficiency:** Cost per hosted user and scaling economics
-- **Market Validation:** Hosted service adoption rate among open source users
 
 ---
 
@@ -301,7 +235,7 @@ NETWORKING_MODE = os.getenv("NETWORKING_MODE", "http")  # Phase 1: http only
 - Dark service architecture
 
 **Advanced Mobile Features**
-- macOS/iPhone/VisionOS apps (iPad-only MVP)
+- macOS/iPhone apps (iPad/Vision-only MVP)
 - Offline capability and sync
 - Push notifications
 - Advanced UI customizations
@@ -328,18 +262,7 @@ NETWORKING_MODE = os.getenv("NETWORKING_MODE", "http")  # Phase 1: http only
 - SwiftUI app connects to local FastAPI backend and displays streamed responses
 - Conversation state persists across app sessions and device restarts
 - Setup documentation enables successful deployment by technical users
-
-**User Validation:**
-- 10+ Claude Code CLI users successfully deploy and use the self-hosted solution
 - Users report successful mobile extension of their desktop Claude Code workflows
-- Conversation continuity works: users can resume desktop CLI conversations on mobile
-- Community feedback indicates genuine workflow value addition
-
-**Community Validation:**
-- GitHub repository receives 100+ stars within 3 months of public release
-- 5+ community members contribute bug reports or feature suggestions
-- Setup success rate >80% based on community feedback and issue reports
-- Documentation and README clarity confirmed through user onboarding experience
 
 ### MVP Implementation Priority
 
@@ -377,21 +300,9 @@ struct ConversationView: View {
 ### MVP Constraints & Assumptions
 
 **Technical Constraints:**
-- **Single User:** MVP supports one Claude Code session per backend deployment
 - **Local Network Only:** No remote access or security hardening beyond HTTPS
-- **iPad iOS 17+:** Limited to current SwiftUI capabilities and recent iOS versions
+- **iPad iOS 26+:** Limited to new iOS26 SwiftUI capabilities and and limited iOS/VisionOS 26
 - **Self-Hosted Only:** Users must deploy their own FastAPI backend
-
-**Key Assumptions:**
-- Claude Code CLI users are comfortable with Python/FastAPI deployment
-- iPad-focused mobile development workflows provide sufficient value validation
-- Standard HTTP API is acceptable for MVP security posture
-- Community interest exists for extending Claude Code to mobile devices
-
-**Success Dependencies:**
-- Anthropic Claude Code SDK remains stable and available
-- SwiftUI provides adequate real-time streaming UI capabilities
-- Community adoption validates problem-solution fit before Phase 2 investment
 
 ---
 
@@ -439,7 +350,6 @@ Compliance & Security:
 ```
 
 **Community-Driven Development:**
-- **Plugin Architecture:** Allow community to extend Claude Code mobile functionality
 - **Custom Agent Configurations:** Team-specific Claude Code settings and behaviors
 - **Integration Scripts:** Community-contributed integrations with popular development tools
 - **Workflow Automation:** Trigger Claude Code analysis from self-hosted CI/CD pipelines
@@ -449,14 +359,6 @@ Compliance & Security:
 - **Enhanced Code Display:** Syntax highlighting, structure visualization for mobile screens  
 - **Voice Commands:** "Analyze this function" voice interaction for hands-free operation
 - **VisionOS Spatial Interface:** Immersive code review and architecture discussion in spatial computing
-
-### Expansion Opportunities
-
-**Open Source Ecosystem Growth:**
-1. **Desktop Companion Extensions:** VS Code/JetBrains plugins that sync with mobile sessions (community-contributed)
-2. **Terminal Integration:** Shell scripts and aliases for seamless desktop-mobile Claude Code workflows
-3. **Development Tool Integration:** Community plugins for popular IDEs and development environments
-4. **Documentation & Tutorials:** Comprehensive guides for mobile AI-assisted development workflows
 
 **Revenue Model Evolution - OpenZiti Controller Only:**
 ```
@@ -475,7 +377,7 @@ Hosted OpenZiti Controller Tiers:
 **Target Platforms (MVP):**
 - **iPadOS 26.0+:** Primary target platform with native liquid glass design system support
 - **VisionOS 26.0+:** Spatial computing interface with liquid glass visual effects for immersive experiences
-- **Backend Compatibility:** Python 3.9+, FastAPI 0.100+, Claude Code SDK latest stable
+- **Backend Compatibility:** Python 3.10+, FastAPI 0.100+, Claude Code SDK latest stable
 
 **Liquid Glass Design Requirements:**
 - **Native SwiftUI Effects:** Utilize iOS 26+ liquid glass APIs for authentic visual experience
@@ -518,7 +420,8 @@ class SessionManager:
 ```
 
 **Database Technology:**
-- **Session Storage:** SQLite for local session persistence (lightweight, serverless)
+- **Backend Storage:** SQLite for service side session persistence and multi-device sync (lightweight, serverless)
+- **On Device Session Storage:** SkipSQL for on device session persistence
 - **Configuration:** JSON/YAML files for backend configuration
 - **No External Dependencies:** Minimize infrastructure complexity for self-hosting
 
@@ -608,12 +511,6 @@ claude-code-mobile/
 - **Competition from Anthropic:** Risk that Anthropic builds official mobile Claude Code client
 
 ### Key Assumptions
-
-**Technical Assumptions:**
-- **iOS 26 Liquid Glass APIs:** Assuming Apple provides robust liquid glass SwiftUI APIs in iOS 26 as speculated
-- **Claude Code SDK Stability:** Assuming continued API compatibility and feature development from Anthropic
-- **SwiftUI VisionOS Maturity:** Assuming VisionOS SwiftUI capabilities mature sufficiently for complex development tools
-- **Performance Feasibility:** Assuming iPad Pro hardware can handle liquid glass effects + real-time Claude streaming simultaneously
 
 **Market & User Assumptions:**
 - **Early Adopter Adoption:** Assuming Claude Code CLI users will upgrade to iOS 26 quickly for cutting-edge mobile experience

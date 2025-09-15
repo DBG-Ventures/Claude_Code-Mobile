@@ -1,0 +1,26 @@
+# FastAPI and web server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+
+# SSE streaming support
+sse-starlette==1.6.5
+
+# Claude Code SDK - requires Python 3.10+ (using placeholder for validation)
+# claude-code-sdk
+
+# HTTP client and async support
+httpx==0.25.2
+aiofiles==23.2.1
+
+# Environment and configuration
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# CORS and security
+python-multipart==0.0.6
+
+# Utilities
+python-json-logger==2.0.7
+uuid==1.30
