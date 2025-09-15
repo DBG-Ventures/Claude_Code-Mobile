@@ -377,14 +377,14 @@ Task 4: CREATE backend/app/main.py
   - PRESERVE: Environment-based configuration for HTTP vs OpenZiti modes
   - DEPENDENCIES: API routers from Task 3, services from Task 2
 
-Task 5: CREATE ios-app/Shared/Models/ClaudeMessage.swift and Session.swift
+Task 5: CREATE ios-app/Shared/Models/ClaudeMessage.swift and Session.swift ✅ COMPLETED
   - IMPLEMENT: Swift data models matching backend Pydantic schema exactly
   - FOLLOW pattern: Codable protocol for JSON serialization, Identifiable for SwiftUI
   - NAMING: PascalCase Swift naming conventions, matching backend field names
   - PLACEMENT: ios-app/Shared/Models/ for cross-platform data models
   - DEPENDENCIES: Foundation framework, matching backend API contract from Tasks 1-2
 
-Task 6: CREATE ios-app/Shared/Services/ClaudeService.swift
+Task 6: CREATE ios-app/Shared/Services/ClaudeService.swift ✅ COMPLETED
   - IMPLEMENT: Swift HTTP client for FastAPI backend communication with WebSocket/SSE support
   - FOLLOW pattern: URLSession WebSocket API with proper lifecycle management
   - NAMING: ClaudeService class with async func query(), streamResponse(), manageSessions()
