@@ -107,14 +107,9 @@ class ClaudeService:
         sdk_kwargs = {}
         if options.api_key:
             sdk_kwargs['api_key'] = options.api_key
-        if options.model:
-            sdk_kwargs['model'] = options.model
-        if options.max_tokens:
-            sdk_kwargs['max_tokens'] = options.max_tokens
-        if options.temperature:
-            sdk_kwargs['temperature'] = options.temperature
-        if options.timeout:
-            sdk_kwargs['timeout'] = options.timeout
+        # Note: Claude Code SDK client constructor only accepts 'api_key' parameter
+        # Other options like model, max_tokens, temperature, timeout are passed
+        # to individual query methods, not the client constructor
         return sdk_kwargs
 
     @asynccontextmanager
@@ -243,45 +238,153 @@ class ClaudeService:
         message_id = str(uuid.uuid4())
         sdk_kwargs = self._prepare_sdk_kwargs(options)
         full_response = ""
+        client = None
 
         try:
-            async with self._get_claude_client(sdk_kwargs) as client:
-                await client.query(request.query)
+            print(f"🚀 Starting Claude streaming for session: {request.session_id}")
+            print(f"🚀 Query: {request.query[:50]}...")
+            print(f"🚀 SDK kwargs: {sdk_kwargs}")
 
-                async for message in client.receive_response():
-                    if hasattr(message, "content"):
-                        for block in message.content:
-                            if hasattr(block, "text"):
-                                chunk_content = block.text
-                                full_response += chunk_content
+            # Create client manually to avoid context manager exit issues
+            from claude_code_sdk import ClaudeSDKClient
+            client = ClaudeSDKClient(**sdk_kwargs)
 
-                                # Yield streaming chunk
-                                yield StreamingChunk(
-                                    content=chunk_content,
-                                    chunk_type="delta",
-                                    message_id=message_id,
-                                    timestamp=datetime.utcnow(),
-                                )
+            print(f"🚀 Claude client created successfully")
+            # Connect to Claude Code SDK before using
+            await client.connect()
+            print(f"🚀 Claude client connected successfully")
 
-                # Add complete assistant message to session
-                assistant_message = ClaudeMessage(
-                    id=message_id,
-                    content=full_response,
-                    role=MessageRole.ASSISTANT,
-                    timestamp=datetime.utcnow(),
-                    session_id=request.session_id,
-                )
-                self.session_manager.add_message(request.session_id, assistant_message)
+            # Claude Code SDK streams automatically through receive_response()
+            await client.query(request.query)
+            print(f"🚀 Query sent to Claude, waiting for streaming response...")
 
-                # Send completion chunk
-                yield StreamingChunk(
-                    content="",
-                    chunk_type="complete",
-                    message_id=message_id,
-                    timestamp=datetime.utcnow(),
-                )
+            message_count = 0
+            async for message in client.receive_response():
+                message_count += 1
+                print(f"🚀 Received message #{message_count}")
+                print(f"🔍 Claude SDK message type: {type(message)}")
+
+                # Extract content from ALL message types and determine chunk type
+                chunk_content = None
+                chunk_type = "delta"
+
+                # Determine message type for UI indicators
+                message_type_name = type(message).__name__.replace('Message', '')
+
+                if hasattr(message, "content") and message.content:
+                    print(f"🔍 Content blocks: {len(message.content)}")
+                    for i, block in enumerate(message.content):
+                        block_type = type(block).__name__
+                        print(f"🔍 Block {i} type: {block_type}")
+
+                        # Handle different block types
+                        if hasattr(block, "text") and block.text.strip():
+                            # TextBlock
+                            chunk_content = block.text
+                            full_response += chunk_content
+                        elif hasattr(block, "name") and hasattr(block, "input"):
+                            # ToolUseBlock
+                            tool_name = block.name
+                            tool_input = getattr(block, "input", {})
+                            print(f"🔧 ToolUseBlock - name: {tool_name}, input: {tool_input}")
+                            chunk_content = f"Using tool: {tool_name}"
+                            if isinstance(tool_input, dict) and tool_input:
+                                # Extract meaningful info from tool input
+                                if "path" in tool_input:
+                                    chunk_content += f" on {tool_input['path']}"
+                                elif "pattern" in tool_input:
+                                    chunk_content += f" searching for '{tool_input['pattern']}'"
+                                elif "file_path" in tool_input:
+                                    chunk_content += f" on {tool_input['file_path']}"
+                                elif "command" in tool_input:
+                                    cmd = tool_input['command']
+                                    if len(cmd) > 50:
+                                        chunk_content += f" command: {cmd[:50]}..."
+                                    else:
+                                        chunk_content += f" command: {cmd}"
+                        elif hasattr(block, "content") and hasattr(block, "tool_use_id"):
+                            # ToolResultBlock
+                            tool_content = getattr(block, "content", "")
+                            tool_use_id = getattr(block, "tool_use_id", "")
+                            print(f"🛠️ ToolResultBlock - tool_use_id: {tool_use_id}, content type: {type(tool_content)}, content: {str(tool_content)[:100]}")
+                            if isinstance(tool_content, str) and tool_content.strip():
+                                # Truncate long tool results for UI
+                                if len(tool_content) > 150:
+                                    chunk_content = f"Tool result: {tool_content[:150]}..."
+                                else:
+                                    chunk_content = f"Tool result: {tool_content}"
+                            elif isinstance(tool_content, (list, dict)):
+                                # Handle structured tool results
+                                chunk_content = f"Tool result: {str(tool_content)[:150]}..."
+
+                        if chunk_content:
+                            # Add message type prefix for visual distinction
+                            if message_type_name == "Assistant":
+                                if "tool" in chunk_content.lower():
+                                    prefixed_content = f"🔧 {chunk_content}"
+                                    chunk_type = "tool"
+                                else:
+                                    prefixed_content = f"🤖 {chunk_content}"
+                                    chunk_type = "thinking" if "thinking" in chunk_content.lower() else "assistant"
+                            elif message_type_name == "User":
+                                prefixed_content = f"🛠️ {chunk_content}"
+                                chunk_type = "tool"
+                            else:
+                                prefixed_content = f"📋 {chunk_content}"
+                                chunk_type = "system"
+
+                            print(f"🔍 Yielding {message_type_name} chunk: '{chunk_content[:50]}...'")
+
+                            # Yield individual thinking step
+                            yield StreamingChunk(
+                                content=prefixed_content,
+                                chunk_type=chunk_type,
+                                message_id=f"{message_id}-{message_count}",
+                                timestamp=datetime.utcnow(),
+                            )
+                            break  # Take first meaningful block
+
+                # Check for other content patterns in different message types
+                elif hasattr(message, "data") and message.data:
+                    print(f"🔍 Message has data: {type(message.data)}")
+                    if isinstance(message.data, str) and message.data.strip():
+                        chunk_content = f"📊 {message.data}"
+                        print(f"🔍 Yielding data chunk: '{message.data[:50]}...'")
+
+                        yield StreamingChunk(
+                            content=chunk_content,
+                            chunk_type="system",
+                            message_id=f"{message_id}-{message_count}",
+                            timestamp=datetime.utcnow(),
+                        )
+
+                elif hasattr(message, "subtype"):
+                    print(f"🔍 Message subtype: {message.subtype}")
+                    # Log subtype for debugging but don't yield empty content
+
+            # Add complete assistant message to session
+            assistant_message = ClaudeMessage(
+                id=message_id,
+                content=full_response,
+                role=MessageRole.ASSISTANT,
+                timestamp=datetime.utcnow(),
+                session_id=request.session_id,
+            )
+            self.session_manager.add_message(request.session_id, assistant_message)
+
+            # Send completion chunk
+            yield StreamingChunk(
+                content="",
+                chunk_type="complete",
+                message_id=message_id,
+                timestamp=datetime.utcnow(),
+            )
 
         except Exception as e:
+            print(f"❌ Claude streaming error: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"❌ Full traceback: {traceback.format_exc()}")
+
             self.session_manager.update_session_status(
                 request.session_id, SessionStatus.ERROR
             )
@@ -293,6 +396,13 @@ class ClaudeService:
                 message_id=message_id,
                 timestamp=datetime.utcnow(),
             )
+        finally:
+            # Properly close client if it exists
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception as e:
+                    print(f"⚠️ Error disconnecting Claude client: {e}")
 
     async def get_session(
         self, session_id: str, user_id: str

@@ -1,26 +1,25 @@
 # FastAPI and web server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-gunicorn==21.2.0
+fastapi>=0.108.0
+uvicorn[standard]>=0.25.0
+gunicorn>=21.2.0
 
 # SSE streaming support
-sse-starlette==1.6.5
+sse-starlette>=1.6.5
 
 # Claude Code SDK - Official Anthropic package
-claude_code_sdk
+claude_code_sdk>=0.0.22
 
 # HTTP client and async support
-httpx==0.25.2
-aiofiles==23.2.1
+httpx>=0.26.0
+aiofiles>=23.2.1
 
 # Environment and configuration
-python-dotenv==1.0.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
 # CORS and security
-python-multipart==0.0.6
+python-multipart>=0.0.6
 
 # Utilities
-python-json-logger==2.0.7
-uuid==1.30
+python-json-logger>=2.0.7

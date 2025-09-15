@@ -8,6 +8,7 @@ streaming capabilities for mobile clients.
 import json
 import asyncio
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import JSONResponse
@@ -32,10 +33,15 @@ from app.services.claude_service import ClaudeService
 router = APIRouter(prefix="/claude", tags=["claude"])
 
 
-# Dependency to get ClaudeService instance
+# Global ClaudeService instance (singleton)
+_claude_service_instance: Optional[ClaudeService] = None
+
 def get_claude_service() -> ClaudeService:
-    """Dependency to provide ClaudeService instance."""
-    return ClaudeService()
+    """Dependency to provide shared ClaudeService instance."""
+    global _claude_service_instance
+    if _claude_service_instance is None:
+        _claude_service_instance = ClaudeService()
+    return _claude_service_instance
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -131,7 +137,6 @@ async def get_session(
 @router.post("/query", response_model=ClaudeQueryResponse)
 async def query_claude(
     request: ClaudeQueryRequest,
-    options: ClaudeCodeOptions,
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
     """
@@ -141,6 +146,8 @@ async def query_claude(
     Use /claude/stream for real-time streaming responses.
     """
     try:
+        # Use options from request or defaults
+        options = request.options or ClaudeCodeOptions()
         response = await claude_service.query(request, options)
         return response
     except ValueError as e:
@@ -154,9 +161,11 @@ async def query_claude(
 @router.post("/stream")
 async def stream_claude_response(
     request: ClaudeQueryRequest,
-    options: ClaudeCodeOptions,
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
+    print(f"🎯 API: Stream endpoint called for session {request.session_id}")
+    print(f"🎯 API: Query: {request.query[:50]}...")
+    print(f"🎯 API: User ID: {request.user_id}")
     """
     Stream Claude's response in real-time using Server-Sent Events.
 
@@ -174,21 +183,27 @@ async def stream_claude_response(
 
         Converts StreamingChunk objects to SSE format for real-time transmission.
         """
+        print(f"🎯 API: Starting event generator for session {request.session_id}")
         try:
             # Validate session exists
+            print(f"🎯 API: Validating session {request.session_id} for user {request.user_id}")
             session = await claude_service.get_session(
                 request.session_id, request.user_id
             )
+            print(f"🎯 API: Session validation result: {session is not None}")
             if not session:
+                error_data = {
+                    "content": None,
+                    "chunk_type": "error",
+                    "message_id": None,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "error": "session_not_found",
+                    "message": f"Session {request.session_id} not found or access denied",
+                }
+                print(f"🎯 API: Sending session not found error: {error_data}")
                 yield {
                     "event": "error",
-                    "data": json.dumps(
-                        {
-                            "error": "session_not_found",
-                            "message": f"Session {request.session_id} not found or access denied",
-                            "timestamp": datetime.utcnow().isoformat(),
-                        }
-                    ),
+                    "data": json.dumps(error_data),
                 }
                 return
 
@@ -197,15 +212,22 @@ async def stream_claude_response(
                 "event": "start",
                 "data": json.dumps(
                     {
-                        "message": "Starting Claude response stream",
-                        "session_id": request.session_id,
+                        "content": "Starting Claude response stream",
+                        "chunk_type": "start",
+                        "message_id": None,
                         "timestamp": datetime.utcnow().isoformat(),
+                        "session_id": request.session_id,
                     }
                 ),
             }
 
+            # Use options from request or defaults
+            options = request.options or ClaudeCodeOptions()
+
             # Stream Claude response chunks
+            print(f"🎯 API: About to start streaming from Claude service")
             async for chunk in claude_service.stream_response(request, options):
+                print(f"🎯 API: Received chunk from Claude service: {chunk.chunk_type}")
                 chunk_data = {
                     "content": chunk.content,
                     "chunk_type": chunk.chunk_type,
@@ -223,9 +245,12 @@ async def stream_claude_response(
                 "event": "error",
                 "data": json.dumps(
                     {
+                        "content": None,
+                        "chunk_type": "error",
+                        "message_id": None,
+                        "timestamp": datetime.utcnow().isoformat(),
                         "error": "validation_error",
                         "message": str(e),
-                        "timestamp": datetime.utcnow().isoformat(),
                     }
                 ),
             }
@@ -234,9 +259,12 @@ async def stream_claude_response(
                 "event": "error",
                 "data": json.dumps(
                     {
+                        "content": None,
+                        "chunk_type": "error",
+                        "message_id": None,
+                        "timestamp": datetime.utcnow().isoformat(),
                         "error": "internal_error",
                         "message": f"Streaming failed: {str(e)}",
-                        "timestamp": datetime.utcnow().isoformat(),
                     }
                 ),
             }

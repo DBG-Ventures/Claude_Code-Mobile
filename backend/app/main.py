@@ -98,7 +98,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "errors": exc.errors(),
                 "body": str(exc.body) if hasattr(exc, "body") else None,
             },
-        ).model_dump(),
+        ).model_dump(mode='json'),
     )
 
 
@@ -111,7 +111,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             error="http_error",
             message=exc.detail,
             details={"status_code": exc.status_code},
-        ).model_dump(),
+        ).model_dump(mode='json'),
     )
 
 
@@ -126,7 +126,7 @@ async def general_exception_handler(request: Request, exc: Exception):
             details={"type": type(exc).__name__}
             if os.getenv("DEBUG") == "true"
             else None,
-        ).model_dump(),
+        ).model_dump(mode='json'),
     )
 
 

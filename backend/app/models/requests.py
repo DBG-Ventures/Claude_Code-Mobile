@@ -36,10 +36,13 @@ class SessionRequest(BaseModel):
 class ClaudeQueryRequest(BaseModel):
     """Request to send a query to Claude within a session."""
 
-    session_id: str = Field(..., description="Session identifier")
     query: str = Field(..., min_length=1, description="Query text for Claude")
-    user_id: str = Field(..., description="User making the request")
+    session_id: Optional[str] = Field(None, description="Session identifier")
+    user_id: Optional[str] = Field("default_user", description="User making the request")
     stream: bool = Field(True, description="Whether to stream the response")
+    options: Optional[ClaudeCodeOptions] = Field(
+        default_factory=ClaudeCodeOptions, description="Claude Code options"
+    )
     context: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="Additional query context"
     )
