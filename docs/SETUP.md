@@ -1,6 +1,6 @@
-# Claude Code Mobile Backend Setup Guide
+# Claude Code Mobile - Complete Setup Guide
 
-Complete deployment guide for technical users to self-host the Claude Code Mobile Backend with FastAPI and optional zero-trust networking.
+Complete deployment and configuration guide for the Claude Code Mobile solution, including FastAPI backend with real-time streaming and SwiftUI iOS client with liquid glass design.
 
 ## Quick Start
 
@@ -147,6 +147,163 @@ curl -N http://localhost:8000/claude/stream \
 ### API Documentation
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+## iOS Client Setup
+
+### Prerequisites
+
+- **Xcode 15+** with iOS 17+ SDK
+- **iPad Pro M1+** (recommended for liquid glass effects)
+- **macOS 14+** for development
+- **Apple Developer Account** for device testing
+
+### Quick Setup (5 minutes)
+
+```bash
+# 1. Navigate to iOS project
+cd ios-app
+
+# 2. Open in Xcode
+open SwiftUIClaudeClient.xcodeproj
+
+# 3. Configure project
+# - Select project in navigator
+# - Update Bundle Identifier to unique value
+# - Select your development team
+# - Update backend URL if not using localhost:8000
+```
+
+### Configuration
+
+**1. Backend URL Configuration**
+
+In `ContentView.swift`, update the development URL:
+
+```swift
+case .development:
+    return URL(string: "http://localhost:8000")  // Update if different
+
+// For simulator on different machine:
+case .development:
+    return URL(string: "http://192.168.1.100:8000")  // Your computer's IP
+```
+
+**2. Build and Test**
+
+1. Select iPad simulator or connected iPad
+2. Build and run (⌘+R)
+3. Test backend connection in Settings tab
+4. Create test session and verify streaming works
+
+### iOS App Features
+
+- **🎨 Liquid Glass UI**: iPad Pro M1+ optimized design
+- **⚡ Real-time Streaming**: SSE-based Claude response streaming
+- **📱 Multi-Session**: Manage up to 10 concurrent conversations
+- **💾 Session Persistence**: Conversations survive app restarts
+- **🔄 Auto-Reconnection**: Handles network transitions gracefully
+- **⚙️ Settings Management**: Backend configuration and testing
+
+## Production Deployment
+
+### Backend Production
+
+**1. Environment Configuration**
+
+```env
+# Production settings
+ENVIRONMENT=production
+DEBUG=false
+LOG_LEVEL=INFO
+WORKERS=4
+
+# Security
+CORS_ORIGINS=["https://yourdomain.com"]
+RATE_LIMIT_REQUESTS=100
+
+# Performance
+MEMORY_LIMIT=2G
+CPU_LIMIT=2.0
+```
+
+**2. Deploy with SSL**
+
+```bash
+# 1. Prepare SSL certificates
+mkdir -p ssl
+# Copy your SSL cert and key files to ssl/
+
+# 2. Deploy with nginx
+docker-compose --profile production up -d
+```
+
+**3. Health Monitoring**
+
+```bash
+# Check service status
+docker-compose ps
+
+# Monitor resource usage  
+docker stats claude-backend
+
+# View detailed logs
+docker-compose logs -f claude-backend
+```
+
+### iOS Production
+
+**1. Update Production URLs**
+
+```swift
+// Update backend URLs for production
+case .production(let url):
+    return URL(string: "https://your-production-domain.com")
+```
+
+**2. App Store Deployment**
+
+1. Archive build (Product → Archive)
+2. Upload to App Store Connect
+3. Configure metadata and screenshots
+4. Submit for review
+
+## Integration Testing
+
+### Backend Testing
+
+```bash
+# 1. Health check
+curl http://localhost:8000/health
+
+# 2. Create test session
+curl -X POST http://localhost:8000/claude/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "claude_options": {"api_key": "your-key"}}'
+
+# 3. Test streaming
+curl -N http://localhost:8000/claude/stream \
+  -H "Accept: text/event-stream" \
+  -d '{"session_id": "session-id", "user_id": "test", "query": "Hello"}'
+```
+
+### iOS Testing
+
+**Connection Test:**
+1. Open iOS app → Settings tab
+2. Verify "Connected" status (green indicator)
+3. Tap "Test Connection" → should show ✅ success
+
+**Streaming Test:**
+1. Go to Sessions tab → create new session
+2. Switch to Chat tab
+3. Send message: "Hello Claude!"
+4. Verify real-time streaming response
+
+**Multi-Session Test:**
+1. Create multiple sessions with different names
+2. Switch between sessions
+3. Verify conversation history persists
+4. Test up to 10 concurrent sessions
 
 ## iOS Client Setup
 

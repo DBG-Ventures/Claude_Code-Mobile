@@ -136,20 +136,57 @@ _Validated: This PRP provides complete implementation guidance for developers un
 ### Current Codebase tree
 
 ```bash
-/Users/beardedwonder/Development/DBGVentures/Claude_Code-Mobile
-├── docs
+/Users/brianpistone/Development/DBGVentures/Claude_Code-Mobile
+├── backend/                          # FastAPI + Claude Code SDK integration (COMPLETED)
+│   ├── venv/                         # Python virtual environment
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                   # FastAPI application entry point ✅
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   └── claude.py             # Claude Code SDK wrapper endpoints ✅
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   └── claude_service.py     # Claude Code SDK service wrapper ✅
+│   │   └── models/
+│   │       ├── __init__.py
+│   │       ├── requests.py           # Pydantic request models ✅
+│   │       └── responses.py          # Pydantic response models ✅
+│   ├── requirements.txt              # Python dependencies ✅
+│   ├── Dockerfile                    # Production Docker container ✅
+│   └── docker-compose.yml            # Development environment ✅
+├── ios-app/                          # SwiftUI VisionForge client (COMPLETED)
+│   └── VisionForge/                  # Xcode project
+│       ├── VisionForge.xcodeproj     # Xcode project file ✅
+│       ├── VisionForge/              # Main app bundle
+│       │   ├── VisionForgeApp.swift  # App entry point ✅
+│       │   ├── ContentView.swift     # Root view with TabView ⚠️ NEEDS UPDATE
+│       │   ├── Models/
+│       │   │   └── ClaudeMessage.swift # Data models ✅
+│       │   ├── Services/
+│       │   │   ├── ClaudeService.swift  # HTTP client ✅
+│       │   │   └── NetworkManager.swift # Network layer ✅
+│       │   ├── ViewModels/
+│       │   │   ├── ConversationViewModel.swift ✅
+│       │   │   └── SessionListViewModel.swift ✅
+│       │   ├── Views/
+│       │   │   ├── ConversationView.swift ✅
+│       │   │   └── SessionManagerView.swift ✅
+│       │   └── Components/
+│       │       └── MessageBubble.swift ✅
+│       ├── VisionForgeTests/         # Unit tests ✅
+│       └── VisionForgeUITests/       # UI tests ✅
+├── docs/                             # Project documentation (COMPLETED)
 │   ├── brief-draft.md
 │   ├── brief.md
-│   └── prd.md
-├── LICENSE
-├── plan_intro.md
-├── PRPs
+│   ├── prd.md
+│   ├── API.md                        # API documentation ✅
+│   └── SETUP.md                      # Deployment guide ✅
+├── PRPs/
 │   ├── prp-readme.md
-│   └── templates
-│       └── prp_base.md
+│   ├── swiftui-claude-code-client.md # This PRP
+│   └── templates/
 └── README.md
-
-4 directories, 8 files
 ```
 
 ### Desired Codebase tree with files to be added and responsibility of file
@@ -350,32 +387,36 @@ struct Session: Identifiable, Codable {
 ### Implementation Tasks (ordered by dependencies)
 
 ```yaml
-Task 1: CREATE backend/app/models/requests.py and responses.py
+Task 1: CREATE backend/app/models/requests.py and responses.py ✅ COMPLETED
   - IMPLEMENT: SessionRequest, ClaudeQueryRequest, SessionResponse, StreamingResponse Pydantic models
   - FOLLOW pattern: FastAPI best practices for request/response validation
   - NAMING: PascalCase for classes, snake_case for fields
   - PLACEMENT: backend/app/models/ directory for API contract definitions
+  - STATUS: Comprehensive Pydantic models implemented with proper validation
 
-Task 2: CREATE backend/app/services/claude_service.py
+Task 2: CREATE backend/app/services/claude_service.py ✅ COMPLETED
   - IMPLEMENT: ClaudeService class wrapping Claude Code SDK with async session management
   - FOLLOW pattern: async with ClaudeSDKClient(options=options) as client context management
   - NAMING: ClaudeService class with async def query(), stream_response(), create_session() methods
   - DEPENDENCIES: claude-code-sdk-shmaxi package, Pydantic models from Task 1
   - PLACEMENT: backend/app/services/ for business logic layer
+  - STATUS: ClaudeService with async session management and streaming implemented
 
-Task 3: CREATE backend/app/api/claude.py
+Task 3: CREATE backend/app/api/claude.py ✅ COMPLETED
   - IMPLEMENT: FastAPI router with Claude Code endpoints - /claude/query, /claude/stream, /claude/sessions
   - FOLLOW pattern: Server-Sent Events (SSE) with sse-starlette for streaming responses
   - NAMING: router = APIRouter(prefix="/claude") with descriptive endpoint names
   - DEPENDENCIES: ClaudeService from Task 2, Pydantic models from Task 1
   - PLACEMENT: backend/app/api/ for API route definitions
+  - STATUS: FastAPI router with SSE streaming and all endpoints implemented
 
-Task 4: CREATE backend/app/main.py
+Task 4: CREATE backend/app/main.py ✅ COMPLETED
   - IMPLEMENT: FastAPI application with CORS, exception handling, and router registration
   - FIND pattern: FastAPI application factory with middleware configuration
   - ADD: CORS middleware for iOS client, rate limiting, authentication setup
   - PRESERVE: Environment-based configuration for HTTP vs OpenZiti modes
   - DEPENDENCIES: API routers from Task 3, services from Task 2
+  - STATUS: FastAPI application with CORS and middleware fully configured
 
 Task 5: CREATE ios-app/Shared/Models/ClaudeMessage.swift and Session.swift ✅ COMPLETED
   - IMPLEMENT: Swift data models matching backend Pydantic schema exactly
@@ -383,6 +424,7 @@ Task 5: CREATE ios-app/Shared/Models/ClaudeMessage.swift and Session.swift ✅ C
   - NAMING: PascalCase Swift naming conventions, matching backend field names
   - PLACEMENT: ios-app/Shared/Models/ for cross-platform data models
   - DEPENDENCIES: Foundation framework, matching backend API contract from Tasks 1-2
+  - STATUS: Complete Swift data models implemented in VisionForge/VisionForge/Models/
 
 Task 6: CREATE ios-app/Shared/Services/ClaudeService.swift ✅ COMPLETED
   - IMPLEMENT: Swift HTTP client for FastAPI backend communication with WebSocket/SSE support
@@ -390,34 +432,62 @@ Task 6: CREATE ios-app/Shared/Services/ClaudeService.swift ✅ COMPLETED
   - NAMING: ClaudeService class with async func query(), streamResponse(), manageSessions()
   - DEPENDENCIES: Models from Task 5, Starscream WebSocket library
   - PLACEMENT: ios-app/Shared/Services/ for cross-platform networking logic
+  - STATUS: Comprehensive ClaudeService and NetworkManager implemented in VisionForge/VisionForge/Services/
 
-Task 7: CREATE ios-app/iPadOS/Views/ConversationView.swift
+Task 7: CREATE ios-app/iPadOS/Views/ConversationView.swift ✅ COMPLETED
   - IMPLEMENT: SwiftUI chat interface with liquid glass effects and real-time streaming
   - FOLLOW pattern: AttributedString for performance-optimized typewriter effects
   - NAMING: ConversationView struct with @State properties for UI state management
   - DEPENDENCIES: ClaudeService from Task 6, Models from Task 5
   - PLACEMENT: ios-app/iPadOS/Views/ for iPad-specific UI implementation
+  - STATUS: ConversationView implemented in VisionForge/VisionForge/Views/
 
-Task 8: CREATE ios-app/iPadOS/Views/SessionManagerView.swift
+Task 8: CREATE ios-app/iPadOS/Views/SessionManagerView.swift ✅ COMPLETED
   - IMPLEMENT: Multiple concurrent session management UI with session switching
   - FOLLOW pattern: List with NavigationLink for session navigation
   - NAMING: SessionManagerView with @StateObject SessionManager for state
   - DEPENDENCIES: Session models from Task 5, ClaudeService from Task 6
   - PLACEMENT: ios-app/iPadOS/Views/ for session management interface
+  - STATUS: SessionManagerView implemented in VisionForge/VisionForge/Views/
 
-Task 9: CREATE backend/Dockerfile and docker-compose.yml
+Task 9: CREATE backend/Dockerfile and docker-compose.yml ✅ COMPLETED
   - IMPLEMENT: Production Docker container with multi-stage build and development environment
   - FOLLOW pattern: Python slim base image with gunicorn + uvicorn workers
   - ADD: Environment variables for Claude SDK configuration, networking mode
   - COVERAGE: Single-command deployment with docker-compose up
   - PLACEMENT: backend/ directory root for deployment configuration
+  - STATUS: Docker, docker-compose.yml, and requirements.txt implemented in backend/
 
-Task 10: CREATE docs/SETUP.md
+Task 10: CREATE docs/SETUP.md ✅ COMPLETED
   - IMPLEMENT: Comprehensive deployment guide for technical users
   - FOLLOW pattern: Step-by-step instructions with troubleshooting section
   - COVERAGE: Docker deployment, iOS client setup, backend configuration
   - VALIDATION: Instructions tested on fresh development environment
   - PLACEMENT: docs/ directory for user documentation
+  - STATUS: SETUP.md and API.md documentation implemented in docs/
+
+⚠️ CRITICAL UPDATES NEEDED (Per PRP Updated Requirements):
+Task 11: CONVERT ContentView.swift from TabView to NavigationSplitView for iPad
+  - CURRENT: Uses TabView navigation (not optimal for iPad)
+  - REQUIRED: NavigationSplitView with sidebar for sessions and main conversation area
+  - PRIORITY: High - affects core user experience on iPad
+  - LOCATION: ios-app/VisionForge/VisionForge/ContentView.swift
+  - REASON: TabView is not iPad-optimized, sidebar navigation provides better UX
+
+Task 12: ADD mandatory backend configuration setup flow
+  - CURRENT: App assumes backend is configured and available
+  - REQUIRED: First-launch detection and mandatory backend setup wizard
+  - COMPONENTS NEEDED: BackendSetupFlow.swift, ConfigurationValidator.swift
+  - PRIORITY: Critical - app unusable without backend configuration
+  - LOCATION: ios-app/VisionForge/VisionForge/Setup/
+  - REASON: Users must explicitly configure backend details on first launch
+
+Task 13: ENHANCE editable settings interface
+  - CURRENT: Settings view shows status but limited editing capability
+  - REQUIRED: Full backend configuration editing with real-time validation
+  - PRIORITY: High - users need to modify backend settings post-setup
+  - LOCATION: ios-app/VisionForge/VisionForge/Views/SettingsView.swift
+  - REASON: Current implementation has basic config switching but needs full editing
 ```
 
 ### Implementation Patterns & Key Details
@@ -522,8 +592,11 @@ PHASE_2_OPENZITI:
 ### Level 1: Syntax & Style (Immediate Feedback)
 
 ```bash
-# Backend validation - run after each Python file creation
+# Backend validation - UPDATED for virtual environment
 cd backend
+
+# Activate virtual environment (CRITICAL: Project uses venv)
+source venv/bin/activate
 
 # Check if tools are available, install if needed
 if ! command -v ruff &> /dev/null; then
@@ -538,9 +611,9 @@ python -m ruff check app/ --fix        # Auto-format and fix linting issues
 python -m mypy app/                    # Type checking for FastAPI routes and services
 python -m ruff format app/             # Ensure consistent formatting
 
-# Swift/iOS validation - run after each Swift file creation
-cd ios-app
-xcodebuild -scheme SwiftUIClaudeClient -destination 'platform=iOS Simulator,name=iPad Pro' clean build
+# Swift/iOS validation - UPDATED for VisionForge project
+cd ../ios-app/VisionForge
+xcodebuild -scheme VisionForge -destination 'platform=iOS Simulator,name=iPad Pro' clean build
 
 # Install SwiftLint if not available
 if ! command -v swiftlint &> /dev/null; then
@@ -550,9 +623,9 @@ else
     swiftlint --fix                    # Swift style guide enforcement
 fi
 
-# Project-wide validation with tool checks
-cd backend && python -m ruff check app/ --fix && python -m mypy app/ && python -m ruff format app/
-cd ios-app && xcodebuild -scheme SwiftUIClaudeClient clean build
+# Project-wide validation with tool checks (UPDATED)
+cd backend && source venv/bin/activate && python -m ruff check app/ --fix && python -m mypy app/ && python -m ruff format app/
+cd ../ios-app/VisionForge && xcodebuild -scheme VisionForge clean build
 
 # Expected: Zero errors. If errors exist, READ output and fix before proceeding.
 ```
@@ -743,3 +816,124 @@ ab -n 100 -c 10 http://localhost:8000/claude/query
 - ❌ Don't use WebSockets when SSE suffices - unidirectional AI streaming works better with SSE
 - ❌ Don't ignore CORS configuration - iOS client needs proper cross-origin setup
 - ❌ Don't deploy without health checks - Docker orchestration requires proper monitoring endpoints
+- ❌ Don't hardcode backend configuration - require user setup on first launch
+- ❌ Don't make settings read-only - provide editable configuration interface
+- ❌ Don't use tab navigation for iPad - use sidebar navigation for better space utilization
+
+## Updated Requirements (Post-Implementation Review)
+
+### Backend Configuration Management
+
+**CRITICAL UPDATE**: The app must handle backend configuration setup properly:
+
+1. **First Launch Experience**:
+   - On first launch, detect missing backend configuration
+   - Present mandatory backend setup flow before allowing access to main interface
+   - No hardcoded default backend URLs should be used
+   - User must explicitly configure backend details
+
+2. **Configuration Persistence**:
+   - Store backend configuration in UserDefaults or Keychain
+   - Validate configuration on app launch
+   - Provide clear error messages for invalid configurations
+
+3. **Configuration Editing**:
+   - Settings interface must allow full editing of backend configuration
+   - Real-time validation of host, port, and scheme inputs
+   - Test connection functionality with immediate feedback
+   - Ability to switch between multiple saved configurations
+
+### iPad-Optimized Navigation Architecture
+
+**CRITICAL UPDATE**: Replace tab navigation with iPad-appropriate interface:
+
+1. **Master-Detail Layout**:
+   ```swift
+   NavigationSplitView {
+       // Sidebar: Session history + settings
+       SessionSidebarView()
+   } detail: {
+       // Main content: Current conversation
+       ConversationView()
+   }
+   ```
+
+2. **Sidebar Navigation Structure**:
+   - **Primary area**: Current session conversation (always visible)
+   - **Collapsible sidebar**: Session history and management
+   - **Settings access**: Bottom of sidebar with gear icon
+   - **Session switching**: Direct tap-to-switch from sidebar
+   - **New session**: Plus button in sidebar header
+
+3. **Responsive Design**:
+   - Sidebar collapses to overlay on compact width (portrait mode)
+   - Sidebar stays persistent on regular width (landscape mode)
+   - Swipe gestures to show/hide sidebar
+   - Keyboard shortcuts for power users
+
+### Updated Implementation Tasks
+
+**REPLACE existing ContentView.swift with:**
+
+```swift
+struct ContentView: View {
+    @StateObject private var networkManager = NetworkManager()
+    @State private var needsBackendSetup = false
+    
+    var body: some View {
+        Group {
+            if needsBackendSetup {
+                BackendSetupFlow()
+                    .environmentObject(networkManager)
+            } else {
+                iPadMainInterface
+            }
+        }
+        .onAppear {
+            checkBackendConfiguration()
+        }
+    }
+    
+    private var iPadMainInterface: some View {
+        NavigationSplitView {
+            SessionSidebarView()
+                .navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 400)
+        } detail: {
+            ConversationView()
+        }
+        .environmentObject(networkManager)
+    }
+}
+```
+
+**NEW REQUIRED COMPONENTS:**
+
+1. **BackendSetupFlow.swift**: Mandatory configuration wizard
+2. **SessionSidebarView.swift**: Session management sidebar
+3. **EditableSettingsView.swift**: Full configuration editing interface
+4. **ConfigurationValidator.swift**: Real-time validation service
+
+### Updated File Structure
+
+```
+VisionForge/VisionForge/
+├── ContentView.swift                     # Updated with setup flow + sidebar nav
+├── Setup/
+│   ├── BackendSetupFlow.swift           # First-time configuration wizard
+│   └── ConfigurationValidator.swift     # Real-time validation
+├── Views/
+│   ├── ConversationView.swift           # Main chat interface (no changes)
+│   ├── SessionSidebarView.swift         # NEW: Sidebar navigation
+│   └── EditableSettingsView.swift       # NEW: Fully editable settings
+└── [existing structure...]
+```
+
+### Updated Success Criteria
+
+- [ ] App detects missing backend configuration and shows setup flow
+- [ ] Backend configuration is fully editable through settings interface
+- [ ] iPad interface uses sidebar navigation instead of tabs
+- [ ] Session switching works seamlessly from sidebar
+- [ ] Configuration validation provides real-time feedback
+- [ ] Settings are persistent across app launches
+- [ ] Responsive design adapts to iPad orientation changes

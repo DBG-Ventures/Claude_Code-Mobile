@@ -24,42 +24,8 @@ from app.models.responses import (
     ClaudeQueryResponse,
 )
 
-# Placeholder for claude-code-sdk (requires Python 3.10+)
-# from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
-
-
-# Temporary mock classes for validation
-class ClaudeCodeOptions:
-    def __init__(
-        self, api_key=None, model=None, max_tokens=None, temperature=None, timeout=None
-    ):
-        self.api_key = api_key
-        self.model = model
-        self.max_tokens = max_tokens
-        self.temperature = temperature
-        self.timeout = timeout
-
-
-class ClaudeSDKClient:
-    def __init__(self, options=None):
-        self.options = options
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
-
-    async def query(self, prompt):
-        pass
-
-    async def receive_response(self):
-        # Mock async generator for testing
-        yield type(
-            "MockMessage",
-            (),
-            {"content": [type("MockBlock", (), {"text": "Mock response"})()]},
-        )()
+# Official Claude Code SDK
+from claude_code_sdk import query, ClaudeSDKClient
 
 
 class SessionManager:
@@ -136,24 +102,29 @@ class ClaudeService:
     def __init__(self):
         self.session_manager = SessionManager()
 
-    def _convert_request_options(self, options: RequestOptions) -> ClaudeCodeOptions:
-        """Convert request options to SDK options."""
-        return ClaudeCodeOptions(
-            api_key=options.api_key,
-            model=options.model,
-            max_tokens=options.max_tokens,
-            temperature=options.temperature,
-            timeout=options.timeout,
-        )
+    def _prepare_sdk_kwargs(self, options: RequestOptions) -> dict:
+        """Convert request options to SDK keyword arguments."""
+        sdk_kwargs = {}
+        if options.api_key:
+            sdk_kwargs['api_key'] = options.api_key
+        if options.model:
+            sdk_kwargs['model'] = options.model
+        if options.max_tokens:
+            sdk_kwargs['max_tokens'] = options.max_tokens
+        if options.temperature:
+            sdk_kwargs['temperature'] = options.temperature
+        if options.timeout:
+            sdk_kwargs['timeout'] = options.timeout
+        return sdk_kwargs
 
     @asynccontextmanager
-    async def _get_claude_client(self, options: ClaudeCodeOptions):
+    async def _get_claude_client(self, sdk_kwargs: dict):
         """
         Async context manager for Claude SDK client.
 
         CRITICAL: Uses async with pattern required for proper resource cleanup.
         """
-        async with ClaudeSDKClient(options=options) as client:
+        async with ClaudeSDKClient(**sdk_kwargs) as client:
             yield client
 
     async def create_session(self, request: SessionRequest) -> SessionResponse:
@@ -201,10 +172,10 @@ class ClaudeService:
         self.session_manager.add_message(request.session_id, user_message)
 
         # Get Claude response
-        sdk_options = self._convert_request_options(options)
+        sdk_kwargs = self._prepare_sdk_kwargs(options)
 
         try:
-            async with self._get_claude_client(sdk_options) as client:
+            async with self._get_claude_client(sdk_kwargs) as client:
                 start_time = datetime.utcnow()
 
                 # Send query to Claude
@@ -270,11 +241,11 @@ class ClaudeService:
 
         # Start streaming response
         message_id = str(uuid.uuid4())
-        sdk_options = self._convert_request_options(options)
+        sdk_kwargs = self._prepare_sdk_kwargs(options)
         full_response = ""
 
         try:
-            async with self._get_claude_client(sdk_options) as client:
+            async with self._get_claude_client(sdk_kwargs) as client:
                 await client.query(request.query)
 
                 async for message in client.receive_response():

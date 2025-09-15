@@ -6,8 +6,8 @@ gunicorn==21.2.0
 # SSE streaming support
 sse-starlette==1.6.5
 
-# Claude Code SDK - requires Python 3.10+ (using placeholder for validation)
-# claude-code-sdk
+# Claude Code SDK - Official Anthropic package
+claude_code_sdk
 
 # HTTP client and async support
 httpx==0.25.2
