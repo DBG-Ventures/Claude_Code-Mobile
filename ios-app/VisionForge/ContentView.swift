@@ -13,12 +13,27 @@ struct ContentView: View {
     // MARK: - State Properties
 
     @EnvironmentObject var networkManager: NetworkManager
-    @EnvironmentObject var persistenceManager: PersistenceManager
     @StateObject private var sessionListViewModel = SessionListViewModel()
+    @StateObject private var sessionStateManager: SessionStateManager
+    @StateObject private var sessionPersistenceService = SessionPersistenceService()
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
     @State private var restoredSessions: [PersistedSession] = []
+
+    // MARK: - Initialization
+
+    init() {
+        // Initialize persistence service first
+        let persistenceService = SessionPersistenceService()
+        _sessionPersistenceService = StateObject(wrappedValue: persistenceService)
+
+        // Create SessionStateManager with placeholder - will be updated via environment
+        _sessionStateManager = StateObject(wrappedValue: SessionStateManager(
+            claudeService: ClaudeService(baseURL: URL(string: "http://placeholder")!),
+            persistenceService: persistenceService
+        ))
+    }
 
     // MARK: - Body
 
@@ -32,8 +47,23 @@ struct ContentView: View {
                 mainInterface
             }
         }
+        .environmentObject(sessionStateManager)  // Inject SessionStateManager following PRP pattern
+        .environmentObject(sessionPersistenceService)
         .onAppear {
             initializeApp()
+        }
+        .task {
+            // Restore sessions using SessionManager persistence
+            do {
+                try await sessionStateManager.restoreSessionsFromPersistence()
+
+                // Select most recent active session
+                if let recentSession = sessionStateManager.activeSessions.first(where: { $0.status == .active }) {
+                    selectedSessionId = recentSession.sessionId
+                }
+            } catch {
+                print("⚠️ Failed to restore sessions from SessionManager: \(error)")
+            }
         }
     }
 
@@ -70,17 +100,19 @@ struct ContentView: View {
 
     private var mainInterface: some View {
         NavigationSplitView {
-            // Sidebar: Session management and navigation
+            // Sidebar: Session management and navigation with SessionManager integration
             SessionSidebarView(selectedSessionId: $selectedSessionId)
                 .environmentObject(networkManager)
                 .environmentObject(sessionListViewModel)
+                .environmentObject(sessionStateManager)  // NEW: SessionManager integration
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 450)
         } detail: {
-            // Detail: Current conversation or empty state
+            // Detail: Current conversation with SessionManager session context
             if let sessionId = selectedSessionId {
                 ConversationView(sessionId: sessionId)
                     .environmentObject(networkManager)
                     .environmentObject(sessionListViewModel)
+                    .environmentObject(sessionStateManager)  // NEW: SessionManager integration
                     .id(sessionId)  // Force view refresh when session changes
             } else {
                 conversationEmptyState
@@ -89,7 +121,7 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
         .onAppear {
             setupNetworkConnection()
-            sessionListViewModel.setClaudeService(networkManager.claudeService)
+            setupSessionManagement()
         }
     }
 
@@ -143,6 +175,8 @@ struct ContentView: View {
             needsBackendSetup = false
             Task {
                 await networkManager.updateConfiguration(savedConfig)
+                // Update SessionStateManager with the proper ClaudeService from NetworkManager
+                await sessionStateManager.updateClaudeService(networkManager.claudeService)
                 await restoreSessionsFromPersistence()
             }
         } else {
@@ -157,6 +191,8 @@ struct ContentView: View {
         if let savedConfig = BackendSetupFlow.getSavedConfiguration() {
             Task {
                 await networkManager.updateConfiguration(savedConfig)
+                // Update SessionStateManager with the proper ClaudeService from NetworkManager
+                await sessionStateManager.updateClaudeService(networkManager.claudeService)
                 // Save to Keychain for future use
                 try? savedConfig.saveToKeychain()
                 await restoreSessionsFromPersistence()
@@ -165,20 +201,14 @@ struct ContentView: View {
     }
 
     private func restoreSessionsFromPersistence() async {
-        // Load recent sessions from SwiftData
-        let recentSessions = persistenceManager.getRecentSessions(limit: 10)
+        // SessionManager session restoration is handled in .task modifier above
+        // Legacy SwiftData persistence has been moved to CoreData SessionPersistenceService
+
         await MainActor.run {
-            self.restoredSessions = recentSessions
+            self.restoredSessions = [] // No longer used - SessionManager handles this
         }
 
-        // Select the most recent active session
-        if let mostRecent = recentSessions.first(where: { $0.status == "active" }) {
-            await MainActor.run {
-                self.selectedSessionId = mostRecent.id
-            }
-        }
-
-        print("✅ Restored \(recentSessions.count) sessions from persistence")
+        print("✅ Session restoration delegated to SessionManager")
     }
 
     private func setupNetworkConnection() {
@@ -193,6 +223,15 @@ struct ContentView: View {
                 // Don't force setup flow here - connection might be temporary
             }
         }
+    }
+
+    private func setupSessionManagement() {
+        // Initialize SessionStateManager integration with legacy SessionListViewModel
+        sessionListViewModel.setClaudeService(networkManager.claudeService)
+
+        // Setup session state monitoring for UI updates
+        // SessionStateManager will be monitored through @Published properties automatically
+        print("✅ SessionManager integration initialized")
     }
 
     private func createNewSession() {

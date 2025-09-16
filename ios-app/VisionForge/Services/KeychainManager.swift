@@ -262,17 +262,17 @@ class KeychainManager {
 
 extension BackendConfig {
     // Save this configuration securely
-    func saveToKeychain() throws {
+    @MainActor func saveToKeychain() throws {
         try KeychainManager.shared.saveBackendConfig(self)
     }
 
     // Load configuration from keychain
-    static func loadFromKeychain() -> BackendConfig? {
+    @MainActor static func loadFromKeychain() -> BackendConfig? {
         return KeychainManager.shared.loadBackendConfig()
     }
 
     // Check if a configuration exists in keychain
-    static var hasStoredConfiguration: Bool {
+    @MainActor static var hasStoredConfiguration: Bool {
         return KeychainManager.shared.hasStoredCredentials()
     }
 }

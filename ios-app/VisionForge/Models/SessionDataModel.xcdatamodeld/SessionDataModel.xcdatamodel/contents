@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24299" systemVersion="25A353" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="YES" userDefinedModelVersionIdentifier="">
+    <entity name="PersistedMessage" representedClassName="PersistedMessage" syncable="YES">
+        <attribute name="content" attributeType="String"/>
+        <attribute name="messageId" attributeType="String"/>
+        <attribute name="metadata" optional="YES" attributeType="Binary"/>
+        <attribute name="role" attributeType="String"/>
+        <attribute name="sessionId" attributeType="String"/>
+        <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="session" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="PersistedSession" inverseName="messages" inverseEntity="PersistedSession"/>
+    </entity>
+    <entity name="PersistedSession" representedClassName="PersistedSession" syncable="YES">
+        <attribute name="conversationData" optional="YES" attributeType="Binary"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="lastActiveAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="messageCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="sessionId" attributeType="String"/>
+        <attribute name="sessionManagerMetadata" optional="YES" attributeType="Binary"/>
+        <attribute name="sessionName" optional="YES" attributeType="String"/>
+        <attribute name="status" attributeType="String"/>
+        <attribute name="userId" attributeType="String"/>
+        <attribute name="workingDirectory" optional="YES" attributeType="String"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="PersistedMessage" inverseName="session" inverseEntity="PersistedMessage"/>
+    </entity>
+</model>

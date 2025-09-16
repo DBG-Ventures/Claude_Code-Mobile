@@ -13,12 +13,22 @@ import UIKit
 // MARK: - Claude Service Protocol
 
 protocol ClaudeServiceProtocol: ObservableObject {
+    // Legacy session management (backwards compatibility)
     func createSession(request: SessionRequest) async throws -> SessionResponse
     func getSession(sessionId: String, userId: String) async throws -> SessionResponse
     func sendQuery(request: ClaudeQueryRequest) async throws -> ClaudeQueryResponse
     func streamQuery(request: ClaudeQueryRequest) -> AsyncThrowingStream<StreamingChunk, Error>
     func getSessions(request: SessionListRequest) async throws -> SessionListResponse
     func updateSession(request: SessionUpdateRequest) async throws -> SessionResponse
+
+    // Enhanced SessionManager integration
+    func createSessionWithManager(request: EnhancedSessionRequest) async throws -> SessionManagerResponse
+    func getSessionWithManager(sessionId: String, userId: String, includeHistory: Bool) async throws -> SessionManagerResponse?
+    func getSessionsWithManager(request: SessionListRequest) async throws -> SessionListResponse
+    func streamQueryWithSessionManager(request: ClaudeQueryRequest) -> AsyncThrowingStream<StreamingChunk, Error>
+    func getSessionManagerStats() async throws -> SessionManagerHealthResponse
+
+    // Connection management
     func connect() async throws
     func disconnect()
     func checkHealth() async throws -> Bool
@@ -31,6 +41,19 @@ enum ConnectionStatus: Equatable {
     case connecting
     case connected
     case error(String)
+
+    var sessionManagerStatus: SessionManagerConnectionStatus {
+        switch self {
+        case .disconnected:
+            return .disconnected
+        case .connecting:
+            return .connecting
+        case .connected:
+            return .connected
+        case .error:
+            return .error
+        }
+    }
 }
 
 // MARK: - Claude Service Implementation
@@ -42,7 +65,9 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
 
     @Published var isConnected: Bool = false
     @Published var connectionStatus: ConnectionStatus = .disconnected
+    @Published var sessionManagerConnectionStatus: SessionManagerConnectionStatus = .disconnected
     @Published var lastError: ErrorResponse?
+    @Published var sessionManagerStats: SessionManagerStats?
 
     // MARK: - Private Properties
 
@@ -93,7 +118,9 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     }
 
     deinit {
-        disconnect()
+        Task { @MainActor in
+            disconnect()
+        }
         cancellables.removeAll()
     }
 
@@ -262,6 +289,271 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
         }
 
         return try decoder.decode(SessionListResponse.self, from: data)
+    }
+
+    // MARK: - Enhanced SessionManager Integration
+
+    func createSessionWithManager(request: EnhancedSessionRequest) async throws -> SessionManagerResponse {
+        let url = baseURL.appendingPathComponent("claude/sessions")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let requestData = try encoder.encode(request)
+        urlRequest.httpBody = requestData
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeServiceError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200, 201:
+            let sessionManagerResponse = try decoder.decode(SessionManagerResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.connected)
+            return sessionManagerResponse
+        case 404:
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.sessionManagerUnavailable
+        default:
+            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+        }
+    }
+
+    func getSessionWithManager(sessionId: String, userId: String, includeHistory: Bool = true) async throws -> SessionManagerResponse? {
+        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions/\(sessionId)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userId),
+            URLQueryItem(name: "include_history", value: String(includeHistory))
+        ]
+
+        guard let url = components.url else {
+            throw ClaudeServiceError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeServiceError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            let sessionManagerResponse = try decoder.decode(SessionManagerResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.connected)
+            return sessionManagerResponse
+        case 404:
+            await updateSessionManagerConnectionStatus(.connected) // SessionManager is available, session just not found
+            return nil
+        default:
+            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+        }
+    }
+
+    func getSessionsWithManager(request: SessionListRequest) async throws -> SessionListResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: request.userId),
+            URLQueryItem(name: "limit", value: String(request.limit)),
+            URLQueryItem(name: "offset", value: String(request.offset))
+        ]
+
+        if let statusFilter = request.statusFilter {
+            components.queryItems?.append(URLQueryItem(name: "status_filter", value: statusFilter))
+        }
+
+        guard let url = components.url else {
+            throw ClaudeServiceError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeServiceError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            let sessionListResponse = try decoder.decode(SessionListResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.connected)
+
+            // TODO: Update local session manager stats if available in future API version
+            // SessionListResponse currently doesn't include sessionManagerStats
+
+            return sessionListResponse
+        case 404:
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.sessionManagerUnavailable
+        default:
+            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+        }
+    }
+
+    func streamQueryWithSessionManager(request: ClaudeQueryRequest) -> AsyncThrowingStream<StreamingChunk, Error> {
+        return AsyncThrowingStream { continuation in
+            Task {
+                await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: 0)
+            }
+        }
+    }
+
+    private func streamQueryWithSessionManagerRetry(
+        request: ClaudeQueryRequest,
+        continuation: AsyncThrowingStream<StreamingChunk, Error>.Continuation,
+        attempt: Int
+    ) async {
+        do {
+            let url = baseURL.appendingPathComponent("claude/stream")
+            var urlRequest = URLRequest(url: url)
+            urlRequest.httpMethod = "POST"
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+            let requestData = try encoder.encode(request)
+            urlRequest.httpBody = requestData
+
+            let (asyncBytes, response) = try await session.bytes(for: urlRequest)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ClaudeServiceError.invalidResponse
+            }
+
+            // Handle SessionManager-specific errors
+            if httpResponse.statusCode == 404 {
+                await updateSessionManagerConnectionStatus(.error)
+                continuation.finish(throwing: ClaudeServiceError.sessionManagerUnavailable)
+                return
+            }
+
+            // Handle rate limiting and server errors with retry
+            if httpResponse.statusCode == 429 || (500...599).contains(httpResponse.statusCode) {
+                if attempt < maxRetryAttempts {
+                    let delay = calculateRetryDelay(attempt: attempt, statusCode: httpResponse.statusCode)
+                    print("⚠️ SessionManager stream request failed with status \(httpResponse.statusCode), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
+
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
+                    return
+                } else {
+                    await updateSessionManagerConnectionStatus(.error)
+                    continuation.finish(throwing: ClaudeServiceError.serverError("Max retry attempts reached after status \(httpResponse.statusCode)"))
+                    return
+                }
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                await updateSessionManagerConnectionStatus(.error)
+                continuation.finish(throwing: ClaudeServiceError.invalidResponse)
+                return
+            }
+
+            // Mark SessionManager as connected on successful streaming start
+            await updateSessionManagerConnectionStatus(.connected)
+
+            var hasReceivedData = false
+
+            // Process Server-Sent Events with SessionManager context preservation
+            for try await line in asyncBytes.lines {
+                if line.hasPrefix("data: ") {
+                    hasReceivedData = true
+                    let jsonData = String(line.dropFirst(6))
+                    if let data = jsonData.data(using: .utf8) {
+                        do {
+                            let chunk = try decoder.decode(StreamingChunk.self, from: data)
+                            continuation.yield(chunk)
+
+                            if chunk.chunkType == .complete || chunk.chunkType == .error {
+                                continuation.finish()
+                                return
+                            }
+                        } catch {
+                            print("⚠️ Failed to decode SessionManager streaming chunk: \(error)")
+                        }
+                    }
+                } else if line.hasPrefix(":ping") || line.hasPrefix(": ping") {
+                    // SessionManager keep-alive
+                    continue
+                }
+            }
+
+            // If stream ended without completion, check if retry is needed
+            if !hasReceivedData && attempt < maxRetryAttempts {
+                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
+                print("⚠️ SessionManager stream ended without data, retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
+
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
+            } else {
+                continuation.finish()
+            }
+        } catch {
+            // Handle network errors with retry
+            if attempt < maxRetryAttempts && isRetryableError(error) {
+                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
+                print("⚠️ SessionManager stream error: \(error.localizedDescription), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
+
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
+                } catch {
+                    await updateSessionManagerConnectionStatus(.error)
+                    continuation.finish(throwing: error)
+                }
+            } else {
+                await updateSessionManagerConnectionStatus(.error)
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    func getSessionManagerStats() async throws -> SessionManagerHealthResponse {
+        let url = baseURL.appendingPathComponent("claude/session-manager/stats")
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeServiceError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200:
+            let statsResponse = try decoder.decode(SessionManagerHealthResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.connected)
+
+            // Extract and store session manager stats if available
+            if let statsData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let sessionManagerStatsData = statsData["session_manager_stats"] as? [String: Any] {
+
+                let statsJsonData = try JSONSerialization.data(withJSONObject: sessionManagerStatsData)
+                let stats = try decoder.decode(SessionManagerStats.self, from: statsJsonData)
+
+                await MainActor.run {
+                    self.sessionManagerStats = stats
+                }
+            }
+
+            return statsResponse
+        case 404:
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.sessionManagerUnavailable
+        default:
+            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
+            await updateSessionManagerConnectionStatus(.error)
+            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+        }
+    }
+
+    private func updateSessionManagerConnectionStatus(_ status: SessionManagerConnectionStatus) async {
+        await MainActor.run {
+            self.sessionManagerConnectionStatus = status
+        }
     }
 
     func updateSession(request: SessionUpdateRequest) async throws -> SessionResponse {
@@ -450,6 +742,18 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
 
         return false
     }
+
+    private func isSessionManagerError(_ error: Error) -> Bool {
+        if let serviceError = error as? ClaudeServiceError {
+            switch serviceError {
+            case .sessionManagerUnavailable:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
 }
 
 // MARK: - Error Types
@@ -459,6 +763,7 @@ enum ClaudeServiceError: LocalizedError {
     case invalidResponse
     case serverError(String)
     case sessionNotFound
+    case sessionManagerUnavailable
     case healthCheckFailed
     case connectionTimeout
     
@@ -476,6 +781,8 @@ enum ClaudeServiceError: LocalizedError {
             return "Health check failed"
         case .connectionTimeout:
             return "Connection timeout"
+        case .sessionManagerUnavailable:
+            return "SessionManager service unavailable"
         }
     }
 }

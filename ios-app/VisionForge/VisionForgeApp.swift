@@ -6,21 +6,12 @@
 //
 
 import SwiftUI
-import SwiftData
 
 @main
 struct VisionForgeApp: App {
-    @StateObject private var persistenceManager: PersistenceManager
     @StateObject private var networkManager: NetworkManager
 
     init() {
-        // Initialize persistence manager
-        do {
-            let manager = try PersistenceManager()
-            _persistenceManager = StateObject(wrappedValue: manager)
-        } catch {
-            fatalError("Failed to initialize persistence: \(error)")
-        }
 
         // Initialize network manager with saved configuration if available
         if let savedConfig = BackendConfig.loadFromKeychain() {
@@ -36,7 +27,6 @@ struct VisionForgeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(persistenceManager)
                 .environmentObject(networkManager)
                 .onAppear {
                     restoreSessionsOnLaunch()
@@ -51,8 +41,8 @@ struct VisionForgeApp: App {
                 await networkManager.updateConfiguration(savedConfig)
             }
 
-            // Restore active sessions from SwiftData
-            let recentSessions = persistenceManager.getRecentSessions(limit: 5)
+            // NOTE: Session restoration moved to SessionPersistenceService (CoreData)
+            // SessionManager handles session persistence
 
             // Connect to backend if configuration exists
             if networkManager.activeConfig.baseURL != nil {
@@ -60,17 +50,15 @@ struct VisionForgeApp: App {
                     try await networkManager.claudeService.connect()
                     print("✅ Restored connection to backend")
 
-                    // Restore the most recent active session if available
-                    if let mostRecentSession = recentSessions.first(where: { $0.status == "active" }) {
-                        print("✅ Restored session: \(mostRecentSession.name)")
-                    }
+                    // NOTE: Session restoration moved to SessionManager
+                    print("✅ Session restoration delegated to SessionManager")
                 } catch {
                     print("⚠️ Failed to restore connection: \(error)")
                 }
             }
 
-            // Clean up old sessions (older than 30 days)
-            persistenceManager.cleanupOldSessions(daysToKeep: 30)
+            // NOTE: Session cleanup moved to SessionPersistenceService (CoreData)
+            // Cleanup handled by SessionManager
         }
     }
 }

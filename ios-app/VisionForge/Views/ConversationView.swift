@@ -22,6 +22,7 @@ struct ConversationView: View {
     @StateObject private var conversationViewModel = ConversationViewModel()
     @EnvironmentObject var networkManager: NetworkManager
     @EnvironmentObject var sessionListViewModel: SessionListViewModel
+    @EnvironmentObject var sessionStateManager: SessionStateManager  // NEW: SessionManager integration
     @State private var messageText: String = ""
     @State private var isComposing: Bool = false
     @FocusState private var isInputFocused: Bool
@@ -55,12 +56,19 @@ struct ConversationView: View {
         }
         .navigationBarHidden(true)
         .onAppear {
-            conversationViewModel.setClaudeService(networkManager.claudeService)
-            loadSessionFromViewModel()
+            setupConversationIntegration()
+            loadSessionWithSessionManager()
         }
         .onChange(of: sessionId) { oldValue, newValue in
-            // When session changes, load the new session
-            loadSessionFromViewModel()
+            // Optimized session switching using SessionManager persistent sessions
+            Task {
+                do {
+                    try await sessionStateManager.switchToSession(newValue)
+                    loadSessionWithSessionManager()
+                } catch {
+                    print("⚠️ Failed to switch to session: \(error)")
+                }
+            }
         }
     }
     
@@ -79,22 +87,25 @@ struct ConversationView: View {
                 Text("Claude Code")
                     .font(.headline)
                     .fontWeight(.semibold)
-                
-                if networkManager.isNetworkAvailable {
+
+                // Network and SessionManager status indicators
+                HStack(spacing: 12) {
+                    // Network Status
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Color.green)
+                            .fill(networkManager.isNetworkAvailable ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text("Connected")
+                        Text(networkManager.isNetworkAvailable ? "Network" : "Offline")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                } else {
+
+                    // SessionManager Status
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Color.red)
+                            .fill(sessionManagerStatusColor)
                             .frame(width: 8, height: 8)
-                        Text("Offline")
+                        Text(sessionManagerStatusText)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -269,11 +280,42 @@ struct ConversationView: View {
     }
     
     // MARK: - Computed Properties
-    
+
     private var canSendMessage: Bool {
-        return !conversationViewModel.isStreaming && 
+        return !conversationViewModel.isStreaming &&
                !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                networkManager.isNetworkAvailable
+    }
+
+    // SessionManager status indicators for navigation header
+    private var sessionManagerStatusColor: Color {
+        switch sessionStateManager.sessionManagerStatus {
+        case .connected:
+            return .green
+        case .connecting:
+            return .orange
+        case .disconnected:
+            return .red
+        case .degraded:
+            return .yellow
+        case .error:
+            return .red
+        }
+    }
+
+    private var sessionManagerStatusText: String {
+        switch sessionStateManager.sessionManagerStatus {
+        case .connected:
+            return "SessionMgr"
+        case .connecting:
+            return "Connecting"
+        case .disconnected:
+            return "Disconnected"
+        case .degraded:
+            return "Degraded"
+        case .error:
+            return "Error"
+        }
     }
     
     // MARK: - Actions
@@ -294,8 +336,36 @@ struct ConversationView: View {
     }
 
     private func loadSessionFromViewModel() {
-        // Load the session data from the backend (with messages)
+        // Legacy method: Load the session data from the backend (with messages)
         conversationViewModel.loadSession(sessionId: sessionId)
+    }
+
+    // MARK: - SessionManager Integration Methods
+
+    private func setupConversationIntegration() {
+        // Initialize ConversationViewModel with SessionStateManager integration
+        conversationViewModel.setClaudeService(networkManager.claudeService)
+        conversationViewModel.setSessionStateManager(sessionStateManager)
+
+        print("✅ ConversationView SessionManager integration initialized")
+    }
+
+    private func loadSessionWithSessionManager() {
+        // Load session using SessionManager with conversation history and context preservation
+        Task {
+            // Ensure SessionStateManager has this session in its active sessions
+            if !sessionStateManager.activeSessions.contains(where: { $0.sessionId == sessionId }) {
+                // Session not in SessionManager cache, trigger load
+                do {
+                    try await sessionStateManager.refreshSessionsFromBackend()
+                } catch {
+                    print("⚠️ Failed to refresh sessions: \(error)")
+                }
+            }
+
+            // Load conversation through enhanced ConversationViewModel with SessionManager context
+            conversationViewModel.loadSession(sessionId: sessionId)
+        }
     }
 }
 
@@ -342,5 +412,9 @@ struct LiquidGlassContainer<Content: View>: View {
         ConversationView(sessionId: "preview-session")
             .environmentObject(NetworkManager())
             .environmentObject(SessionListViewModel())
+            .environmentObject(SessionStateManager(
+                claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
+                persistenceService: SessionPersistenceService()
+            ))
     }
 }

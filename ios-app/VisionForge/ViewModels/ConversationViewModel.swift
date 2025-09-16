@@ -14,20 +14,25 @@ import Combine
 class ConversationViewModel: ObservableObject {
     
     // MARK: - Published Properties
-    
+
     @Published var messages: [ClaudeMessage] = []
     @Published var isStreaming: Bool = false
     @Published var streamingMessageId: String?
     @Published var currentSession: SessionResponse?
+    @Published var currentSessionManager: SessionManagerResponse?
     @Published var error: ErrorResponse?
     @Published var isLoading: Bool = false
+    @Published var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
+    @Published var conversationHistory: [ConversationMessage] = []
     
     // MARK: - Private Properties
 
     private var claudeService: ClaudeService?
+    private var sessionStateManager: SessionStateManager?
     private var cancellables = Set<AnyCancellable>()
     private var streamingContinuation: Task<Void, Never>?
     private var currentSessionId: String?
+    private var useSessionManager: Bool = true // Flag to use enhanced SessionManager features
 
     // Message accumulation optimization
     private var messageBuffer: String = ""
@@ -61,10 +66,68 @@ class ConversationViewModel: ObservableObject {
     
     func setClaudeService(_ service: ClaudeService) {
         self.claudeService = service
-        createInitialSessionIfNeeded()
+        if !useSessionManager {
+            createInitialSessionIfNeeded()
+        }
+    }
+
+    func setSessionStateManager(_ sessionStateManager: SessionStateManager) {
+        self.sessionStateManager = sessionStateManager
+        setupSessionStateObservers()
+
+        // Auto-load current session if available
+        if let currentSessionId = sessionStateManager.currentSessionId {
+            loadSessionWithManager(sessionId: currentSessionId)
+        } else {
+            createInitialSessionWithManager()
+        }
     }
     
     func sendMessage(_ content: String) {
+        if useSessionManager, let sessionStateManager = sessionStateManager {
+            sendMessageWithSessionManager(content)
+        } else {
+            sendMessageLegacy(content)
+        }
+    }
+
+    private func sendMessageWithSessionManager(_ content: String) {
+        guard let claudeService = claudeService,
+              let sessionStateManager = sessionStateManager,
+              let currentSessionManager = currentSessionManager else {
+            setError(ErrorResponse(
+                error: "configuration_error",
+                message: "SessionManager not configured or no active session",
+                details: nil,
+                timestamp: Date(),
+                requestId: nil
+            ))
+            return
+        }
+
+        // Add user message immediately
+        let userMessage = ClaudeMessage(
+            id: UUID().uuidString,
+            content: content,
+            role: .user,
+            timestamp: Date(),
+            sessionId: currentSessionManager.sessionId
+        )
+
+        messages.append(userMessage)
+
+        // Save message to conversation history
+        let conversationMessage = ConversationMessage.from(userMessage)
+        Task {
+            await sessionStateManager.saveConversationMessage(conversationMessage)
+            await sessionStateManager.updateSessionLastActive(currentSessionManager.sessionId)
+        }
+
+        // Start streaming Claude's response with SessionManager
+        startStreamingResponseWithSessionManager(query: content, sessionId: currentSessionManager.sessionId)
+    }
+
+    private func sendMessageLegacy(_ content: String) {
         guard let claudeService = claudeService,
               let session = currentSession else {
             setError(ErrorResponse(
@@ -76,7 +139,7 @@ class ConversationViewModel: ObservableObject {
             ))
             return
         }
-        
+
         // Add user message immediately
         let userMessage = ClaudeMessage(
             id: UUID().uuidString,
@@ -85,9 +148,9 @@ class ConversationViewModel: ObservableObject {
             timestamp: Date(),
             sessionId: session.sessionId
         )
-        
+
         messages.append(userMessage)
-        
+
         // Start streaming Claude's response
         startStreamingResponse(query: content, sessionId: session.sessionId)
     }
@@ -415,6 +478,245 @@ class ConversationViewModel: ObservableObject {
 
                 // Try to create a new session as fallback
                 self.createInitialSessionIfNeeded()
+            }
+        }
+    }
+
+    private func setupSessionStateObservers() {
+        guard let sessionStateManager = sessionStateManager else { return }
+
+        // Monitor SessionManager connection status
+        sessionStateManager.$sessionManagerStatus
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.sessionManagerStatus, on: self)
+            .store(in: &cancellables)
+
+        // Monitor session state changes
+        sessionStateManager.$currentSessionId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] sessionId in
+                if let sessionId = sessionId, sessionId != self?.currentSessionId {
+                    self?.handleSessionChange(sessionId)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleSessionChange(_ sessionId: String) {
+        // Auto-switch to new session if it's different from current
+        if sessionId != currentSessionId {
+            loadSessionWithManager(sessionId: sessionId)
+        }
+    }
+
+    private func createInitialSessionWithManager() {
+        guard let sessionStateManager = sessionStateManager else { return }
+
+        isLoading = true
+
+        Task {
+            do {
+                let session = try await sessionStateManager.createNewSession(
+                    name: "Mobile Chat Session",
+                    workingDirectory: nil
+                )
+
+                await MainActor.run {
+                    self.currentSessionManager = session
+                    self.currentSessionId = session.sessionId
+                    self.isLoading = false
+                    print("✅ Created initial SessionManager session: \(session.sessionId)")
+                }
+
+            } catch {
+                await MainActor.run {
+                    self.setError(ErrorResponse(
+                        error: "session_creation_error",
+                        message: "Failed to create SessionManager session: \(error.localizedDescription)",
+                        details: nil,
+                        timestamp: Date(),
+                        requestId: nil
+                    ))
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+
+    private func loadSessionWithManager(sessionId: String) {
+        guard let sessionStateManager = sessionStateManager else {
+            setError(ErrorResponse(
+                error: "configuration_error",
+                message: "SessionStateManager not configured",
+                details: nil,
+                timestamp: Date(),
+                requestId: nil
+            ))
+            return
+        }
+
+        // Stop any current streaming
+        stopStreaming()
+
+        // Clear current messages
+        clearMessages()
+
+        isLoading = true
+
+        Task {
+            do {
+                // Switch to session using SessionStateManager
+                try await sessionStateManager.switchToSession(sessionId)
+
+                // Get session from cache
+                if let session = sessionStateManager.getSession(sessionId) {
+                    await MainActor.run {
+                        self.currentSessionManager = session
+                        self.currentSessionId = sessionId
+                        print("✅ Loaded SessionManager session \(sessionId)")
+                    }
+
+                    // Load conversation history
+                    await loadConversationHistoryFromSessionManager(sessionId: sessionId)
+                }
+
+                await MainActor.run {
+                    self.isLoading = false
+                }
+
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.setError(ErrorResponse(
+                        error: "session_load_failed",
+                        message: "Failed to load session: \(error.localizedDescription)",
+                        details: nil,
+                        timestamp: Date(),
+                        requestId: nil
+                    ))
+                }
+            }
+        }
+    }
+
+    private func loadConversationHistoryFromSessionManager(sessionId: String) async {
+        guard let sessionStateManager = sessionStateManager else { return }
+
+        do {
+            let history = try await sessionStateManager.loadConversationHistory(for: sessionId)
+
+            await MainActor.run {
+                self.conversationHistory = history
+                // Convert conversation history to UI messages
+                self.messages = history.map { $0.toClaudeMessage() }
+                print("✅ Loaded \(history.count) messages from conversation history")
+            }
+
+        } catch {
+            print("⚠️ Failed to load conversation history: \(error)")
+            // Don't show error to user for history loading failures
+        }
+    }
+
+    private func startStreamingResponseWithSessionManager(query: String, sessionId: String) {
+        guard let claudeService = claudeService else { return }
+
+        isStreaming = true
+        let messageId = UUID().uuidString
+        streamingMessageId = messageId
+
+        // Reset buffer
+        messageBuffer = ""
+        lastUpdateTime = Date()
+
+        // Start buffer update timer for smooth UI updates
+        startBufferTimer(messageId: messageId, sessionId: sessionId)
+
+        // Start streaming task with SessionManager
+        streamingContinuation = Task {
+            do {
+                let queryRequest = ClaudeQueryRequest(
+                    sessionId: sessionId,
+                    query: query,
+                    userId: userId,
+                    stream: true,
+                    options: claudeOptions,
+                    context: [:]
+                )
+
+                var accumulatedContent = ""
+                var messageCreated = false
+
+                // Use SessionManager streaming for enhanced context preservation
+                for try await chunk in claudeService.streamQueryWithSessionManager(request: queryRequest) {
+                    guard !Task.isCancelled else { break }
+
+                    switch chunk.chunkType {
+                    case .start:
+                        break
+
+                    case .delta:
+                        if let content = chunk.content {
+                            accumulatedContent += content
+
+                            await MainActor.run {
+                                self.messageBuffer += content
+
+                                if !messageCreated {
+                                    let deltaMessage = ClaudeMessage(
+                                        id: messageId,
+                                        content: "",
+                                        role: .assistant,
+                                        timestamp: Date(),
+                                        sessionId: sessionId
+                                    )
+                                    self.messages.append(deltaMessage)
+                                    messageCreated = true
+                                }
+
+                                let timeSinceLastUpdate = Date().timeIntervalSince(self.lastUpdateTime)
+                                if self.messageBuffer.count > self.maxBufferSize || timeSinceLastUpdate > 1.0 {
+                                    self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                                }
+                            }
+                        }
+
+                    case .complete:
+                        await MainActor.run {
+                            if !self.messageBuffer.isEmpty {
+                                self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                            }
+                            self.stopBufferTimer()
+                            self.isStreaming = false
+                            self.streamingMessageId = nil
+
+                            // Save final assistant message to conversation history
+                            if let finalMessage = self.messages.first(where: { $0.id == messageId }) {
+                                let conversationMessage = ConversationMessage.from(finalMessage)
+                                Task {
+                                    await self.sessionStateManager?.saveConversationMessage(conversationMessage)
+                                    await self.sessionStateManager?.updateSessionLastActive(sessionId)
+                                }
+                            }
+                        }
+
+                    case .error:
+                        await MainActor.run {
+                            self.stopBufferTimer()
+                            let errorMessage = chunk.error ?? chunk.message ?? chunk.content ?? "Unknown streaming error"
+                            self.handleStreamingError(errorMessage)
+                        }
+
+                    default:
+                        break
+                    }
+                }
+
+            } catch {
+                await MainActor.run {
+                    self.stopBufferTimer()
+                    self.handleStreamingError(error.localizedDescription)
+                }
             }
         }
     }
