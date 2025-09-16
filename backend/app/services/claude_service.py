@@ -64,6 +64,14 @@ class ClaudeService:
             self.project_root
         )
 
+        # Expand user home directory (~) if present
+        if working_dir and working_dir.startswith("~"):
+            working_dir = str(Path(working_dir).expanduser())
+
+        # Validate that the working directory exists
+        if working_dir and not Path(working_dir).exists():
+            raise ValueError(f"Working directory does not exist: {working_dir}")
+
         try:
             # Initialize Claude SDK session with explicit working directory
             response = query(
@@ -236,13 +244,19 @@ class ClaudeService:
 
     async def verify_session_exists(self, session_id: str) -> bool:
         """Verify if a Claude SDK session exists by checking file system."""
+        # Use the actual Claude session directory structure
         sessions_path = (
             Path.home()
             / ".claude"
             / "projects"
-            / f"-{str(self.project_root).replace('/', '-')}"
+            / f"--{str(self.project_root).replace('/', '-')}"
         )
         session_file = sessions_path / f"{session_id}.jsonl"
+
+        # Debug logging
+        logger.debug(f"🔍 Session validation - Looking for session file: {session_file}")
+        logger.debug(f"🔍 Session file exists: {session_file.exists()}")
+
         return session_file.exists()
 
     async def list_sessions(self) -> List[str]:
@@ -251,7 +265,7 @@ class ClaudeService:
             Path.home()
             / ".claude"
             / "projects"
-            / f"-{str(self.project_root).replace('/', '-')}"
+            / f"--{str(self.project_root).replace('/', '-')}"
         )
 
         if not sessions_path.exists():

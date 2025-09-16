@@ -57,7 +57,7 @@ struct SessionSidebarView: View {
             }
         }
         .sheet(isPresented: $showingNewSessionSheet) {
-            NewSessionSheetCompact()
+            NewSessionSheet()
                 .environmentObject(networkManager)
                 .environmentObject(sessionViewModel)
         }
@@ -443,76 +443,6 @@ struct SidebarSessionRow: View {
     }
 }
 
-// MARK: - New Session Sheet (Compact Version)
-
-struct NewSessionSheetCompact: View {
-    @EnvironmentObject var sessionViewModel: SessionListViewModel
-    @EnvironmentObject var networkManager: NetworkManager
-    @Environment(\.presentationMode) var presentationMode
-
-    @State private var sessionName: String = ""
-    @State private var isCreating: Bool = false
-
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Session Name")
-                        .font(.headline)
-
-                    TextField("Enter session name...", text: $sessionName)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                }
-
-                HStack {
-                    Button("Cancel") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                    .foregroundColor(.red)
-
-                    Spacer()
-
-                    Button(action: {
-                        createSession()
-                    }) {
-                        HStack {
-                            if isCreating {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .foregroundColor(.blue)
-                            }
-                            Text(isCreating ? "Creating..." : "Create")
-                        }
-                    }
-                    .foregroundColor(.blue)
-                    .disabled(sessionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
-                }
-
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("New Session")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-
-    private func createSession() {
-        let trimmedName = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
-        isCreating = true
-
-        sessionViewModel.createNewSession(name: trimmedName) { success in
-            DispatchQueue.main.async {
-                self.isCreating = false
-                if success {
-                    self.presentationMode.wrappedValue.dismiss()
-                } else {
-                    // Show error feedback - could be enhanced with error message
-                    print("Failed to create session")
-                }
-            }
-        }
-    }
-}
 
 
 // MARK: - Preview

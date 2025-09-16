@@ -48,8 +48,9 @@ struct SessionManagerView: View {
                 }
             }
             .sheet(isPresented: $showingNewSessionSheet) {
-                NewSessionSheet(sessionViewModel: sessionViewModel)
+                NewSessionSheet()
                     .environmentObject(networkManager)
+                    .environmentObject(sessionViewModel)
             }
             .alert("Delete Session", isPresented: $showingDeleteAlert) {
                 Button("Cancel", role: .cancel) {}
@@ -375,7 +376,7 @@ struct StatItem: View {
 // MARK: - New Session Sheet
 
 struct NewSessionSheet: View {
-    @ObservedObject var sessionViewModel: SessionListViewModel
+    @EnvironmentObject var sessionViewModel: SessionListViewModel
     @EnvironmentObject var networkManager: NetworkManager
     @Environment(\.presentationMode) var presentationMode
 
