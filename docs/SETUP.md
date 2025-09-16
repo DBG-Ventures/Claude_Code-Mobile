@@ -21,20 +21,28 @@ curl http://localhost:8000/health
 
 ## Prerequisites
 
-### Required
-- Docker 20.10+ and Docker Compose 2.0+
-- Claude API key from [Anthropic Console](https://console.anthropic.com/)
-- 4GB RAM minimum, 8GB recommended
-- 10GB disk space for Docker images and logs
+### System Requirements
+- **Docker**: 20.10+ and Docker Compose 2.0+
+- **Node.js**: 18.x or higher (for Claude Code SDK)
+- **Python**: 3.11+ (if running without Docker)
+- **Memory**: 4GB RAM minimum, 8GB recommended for production
+- **Storage**: 10GB disk space for Docker images, logs, and session storage
+- **Network**: Port 8000 available (configurable)
+
+### Required Credentials
+- **Claude API Key**: From [Anthropic Console](https://console.anthropic.com/)
+- **Claude Code OAuth Token**: Authentication for Claude Code SDK integration
 
 ### For iOS Client Development
-- macOS with Xcode 14+
-- iOS 16+ device or simulator
-- Apple Developer account for device testing
+- **macOS**: Sonoma 14+ with Xcode 15+
+- **iOS Targets**: iPadOS 17+, macOS 14+, visionOS 1+
+- **Hardware**: M1+ iPad Pro recommended for liquid glass effects
+- **Apple Developer**: Account required for device testing and App Store deployment
 
 ### For Phase 2 OpenZiti (Optional)
-- OpenZiti network controller access
-- Network administrator privileges for identity enrollment
+- **OpenZiti Network**: Controller access and service configuration
+- **Network Admin**: Privileges for identity enrollment and service setup
+- **Certificates**: Valid identity certificates for zero-trust networking
 
 ## Environment Configuration
 
@@ -435,6 +443,33 @@ WORKERS=8  # Increase for more concurrent requests
 
 # Check rate limiting
 curl -I http://localhost:8000/claude/health
+```
+
+#### 5. Claude Code SDK Issues
+```bash
+# Verify Claude Code SDK installation
+docker exec claude-backend npm list -g @anthropic-ai/claude-code
+
+# Check SDK authentication
+docker exec claude-backend claude-code --version
+
+# Test SDK connection
+curl -X POST http://localhost:8000/claude/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test", "working_directory": "/tmp"}'
+```
+
+#### 6. Session Management Issues
+```bash
+# Check session storage
+docker exec claude-backend ls -la /app/logs/sessions/
+
+# Verify session persistence
+curl http://localhost:8000/claude/sessions/list?user_id=test
+
+# Reset session storage
+docker exec claude-backend rm -rf /app/logs/sessions/*
+docker-compose restart claude-backend
 ```
 
 ### Debug Mode
