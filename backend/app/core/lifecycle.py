@@ -12,6 +12,8 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from app.utils.logging import setup_logging, StructuredLogger
+from app.utils.session_storage import PersistentSessionStorage
+from app.services.session_manager import SessionManager
 
 
 @asynccontextmanager
@@ -37,7 +39,7 @@ async def lifespan(app: FastAPI):
         "Claude Code Mobile Backend starting up",
         category="lifecycle",
         operation="startup",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.utcnow().isoformat(),
     )
 
     # CRITICAL: Set consistent working directory BEFORE any Claude SDK operations
@@ -64,15 +66,25 @@ async def lifespan(app: FastAPI):
     app.state.project_root = project_root
     app.state.claude_sessions_path = claude_sessions_path
 
-    # Initialize shared session registry for persistence across requests
-    app.state.session_registry = {}
+    # Initialize persistent session storage for persistence across requests and restarts
+    session_storage_file = project_root / ".claude_sessions.json"
+    app.state.session_storage = PersistentSessionStorage(session_storage_file)
+
+    # Initialize SessionManager for persistent ClaudeSDKClient management
+    # Configure with reasonable defaults for mobile usage
+    session_manager = SessionManager(
+        session_timeout=3600,  # 1 hour inactivity timeout
+        cleanup_interval=300,  # Check every 5 minutes
+    )
+    app.state.session_manager = session_manager
 
     logger.info(
-        "Working directory and session storage configured",
+        "Working directory, session storage, and SessionManager configured",
         category="lifecycle",
         operation="configure_directories",
         project_root=str(project_root),
-        claude_sessions_path=str(claude_sessions_path)
+        claude_sessions_path=str(claude_sessions_path),
+        session_manager_initialized=True,
     )
 
     # Create Claude config directory if it doesn't exist
@@ -99,8 +111,32 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Claude Code Mobile Backend shutting down",
         category="lifecycle",
-        operation="shutdown",
-        timestamp=datetime.utcnow().isoformat()
+        operation="shutdown_start",
+        timestamp=datetime.utcnow().isoformat(),
+    )
+
+    # Cleanup SessionManager and all persistent clients
+    if hasattr(app.state, "session_manager"):
+        try:
+            await app.state.session_manager.shutdown()
+            logger.info(
+                "SessionManager shutdown completed",
+                category="lifecycle",
+                operation="session_manager_shutdown",
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during SessionManager shutdown: {e}",
+                category="lifecycle",
+                operation="session_manager_shutdown_error",
+                error=str(e),
+            )
+
+    logger.info(
+        "Claude Code Mobile Backend shutdown completed",
+        category="lifecycle",
+        operation="shutdown_complete",
+        timestamp=datetime.utcnow().isoformat(),
     )
 
 

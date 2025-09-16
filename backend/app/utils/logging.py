@@ -7,7 +7,6 @@ for debugging session management and Claude SDK interactions.
 
 import logging
 import sys
-from datetime import datetime
 from typing import Dict, Any, Optional
 from pythonjsonlogger import jsonlogger
 
@@ -21,13 +20,13 @@ class ContextualFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         # Add default context if not present
-        if not hasattr(record, 'category'):
-            record.category = 'general'
-        if not hasattr(record, 'session_id'):
+        if not hasattr(record, "category"):
+            record.category = "general"
+        if not hasattr(record, "session_id"):
             record.session_id = None
-        if not hasattr(record, 'user_id'):
+        if not hasattr(record, "user_id"):
             record.user_id = None
-        if not hasattr(record, 'operation'):
+        if not hasattr(record, "operation"):
             record.operation = None
 
         return True
@@ -42,15 +41,15 @@ def setup_logging() -> None:
         root_logger.removeHandler(handler)
 
     # Create formatter based on configuration
-    if settings.log_format.lower() == 'json':
+    if settings.log_format.lower() == "json":
         formatter = jsonlogger.JsonFormatter(
-            fmt='%(asctime)s %(name)s %(levelname)s %(category)s %(message)s %(session_id)s %(user_id)s %(operation)s',
-            datefmt='%Y-%m-%dT%H:%M:%SZ'
+            fmt="%(asctime)s %(name)s %(levelname)s %(category)s %(message)s %(session_id)s %(user_id)s %(operation)s",
+            datefmt="%Y-%m-%dT%H:%M:%SZ",
         )
     else:
         formatter = logging.Formatter(
-            fmt='%(asctime)s [%(levelname)s] %(category)s: %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            fmt="%(asctime)s [%(levelname)s] %(category)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
     # Create and configure handler
@@ -64,8 +63,8 @@ def setup_logging() -> None:
 
     # Quiet down noisy libraries in production
     if settings.is_production:
-        logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
-        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -79,7 +78,7 @@ class LogContext:
     def __init__(self, logger: logging.Logger, **context: Any):
         self.logger = logger
         self.context = context
-        self.old_extra = getattr(logger, '_extra_context', {})
+        self.old_extra = getattr(logger, "_extra_context", {})
 
     def __enter__(self):
         # Merge with existing context
@@ -129,8 +128,15 @@ class StructuredLogger:
 
 
 # Convenience functions for common log categories
-def log_session_event(logger: StructuredLogger, message: str, session_id: str,
-                     user_id: str, operation: str, level: str = "info", **extra) -> None:
+def log_session_event(
+    logger: StructuredLogger,
+    message: str,
+    session_id: str,
+    user_id: str,
+    operation: str,
+    level: str = "info",
+    **extra,
+) -> None:
     """Log a session management event."""
     method = getattr(logger, level.lower())
     method(
@@ -139,12 +145,18 @@ def log_session_event(logger: StructuredLogger, message: str, session_id: str,
         session_id=session_id,
         user_id=user_id,
         operation=operation,
-        **extra
+        **extra,
     )
 
 
-def log_claude_sdk_event(logger: StructuredLogger, message: str, session_id: str,
-                        operation: str, level: str = "info", **extra) -> None:
+def log_claude_sdk_event(
+    logger: StructuredLogger,
+    message: str,
+    session_id: str,
+    operation: str,
+    level: str = "info",
+    **extra,
+) -> None:
     """Log a Claude SDK interaction event."""
     method = getattr(logger, level.lower())
     method(
@@ -152,12 +164,18 @@ def log_claude_sdk_event(logger: StructuredLogger, message: str, session_id: str
         category="claude_sdk",
         session_id=session_id,
         operation=operation,
-        **extra
+        **extra,
     )
 
 
-def log_streaming_event(logger: StructuredLogger, message: str, session_id: str,
-                       chunk_type: str, level: str = "debug", **extra) -> None:
+def log_streaming_event(
+    logger: StructuredLogger,
+    message: str,
+    session_id: str,
+    chunk_type: str,
+    level: str = "debug",
+    **extra,
+) -> None:
     """Log a streaming event."""
     method = getattr(logger, level.lower())
     method(
@@ -165,12 +183,18 @@ def log_streaming_event(logger: StructuredLogger, message: str, session_id: str,
         category="streaming",
         session_id=session_id,
         chunk_type=chunk_type,
-        **extra
+        **extra,
     )
 
 
-def log_networking_event(logger: StructuredLogger, message: str, endpoint: str,
-                        status_code: Optional[int] = None, level: str = "info", **extra) -> None:
+def log_networking_event(
+    logger: StructuredLogger,
+    message: str,
+    endpoint: str,
+    status_code: Optional[int] = None,
+    level: str = "info",
+    **extra,
+) -> None:
     """Log a networking event."""
     method = getattr(logger, level.lower())
     method(
@@ -178,12 +202,18 @@ def log_networking_event(logger: StructuredLogger, message: str, endpoint: str,
         category="networking",
         endpoint=endpoint,
         status_code=status_code,
-        **extra
+        **extra,
     )
 
 
-def log_performance_event(logger: StructuredLogger, message: str, operation: str,
-                         duration_ms: float, level: str = "info", **extra) -> None:
+def log_performance_event(
+    logger: StructuredLogger,
+    message: str,
+    operation: str,
+    duration_ms: float,
+    level: str = "info",
+    **extra,
+) -> None:
     """Log a performance measurement."""
     method = getattr(logger, level.lower())
     method(
@@ -191,5 +221,5 @@ def log_performance_event(logger: StructuredLogger, message: str, operation: str
         category="performance",
         operation=operation,
         duration_ms=duration_ms,
-        **extra
+        **extra,
     )

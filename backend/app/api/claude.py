@@ -33,10 +33,11 @@ router = APIRouter(prefix="/claude", tags=["claude"])
 
 
 def get_claude_service(request: Request) -> ClaudeService:
-    """Dependency to provide Claude service with shared session registry."""
+    """Dependency to provide Claude service with SessionManager integration."""
     project_root = request.app.state.project_root
-    session_registry = request.app.state.session_registry
-    return ClaudeService(project_root, session_registry)
+    session_storage = request.app.state.session_storage
+    session_manager = request.app.state.session_manager
+    return ClaudeService(project_root, session_storage, session_manager)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -46,8 +47,37 @@ async def health_check():
         status="healthy",
         timestamp=datetime.utcnow(),
         version="1.0.0",
-        dependencies={"claude_sdk": "available", "sse_streaming": "available"},
+        dependencies={
+            "claude_sdk": "available",
+            "sse_streaming": "available",
+            "session_manager": "available",
+        },
     )
+
+
+@router.get("/session-manager/stats")
+async def get_session_manager_stats(
+    request: Request,
+    claude_service: ClaudeService = Depends(get_claude_service),
+):
+    """
+    Get SessionManager statistics for monitoring and debugging.
+
+    Returns information about active sessions, cleanup status, and performance metrics.
+    """
+    try:
+        stats = await claude_service.session_manager.get_session_stats()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "session_manager_stats": stats,
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get session manager stats: {str(e)}"
+        )
 
 
 @router.post("/sessions", response_model=SessionResponse)

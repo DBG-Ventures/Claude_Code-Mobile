@@ -7,7 +7,6 @@ eliminating complex path computation and aligning with Claude CLI behavior.
 
 import uuid
 import asyncio
-import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, AsyncGenerator, List
@@ -28,42 +27,48 @@ from app.models.responses import (
 )
 
 # Official Claude Code SDK
-from claude_code_sdk import query
-from claude_code_sdk.types import ClaudeCodeOptions
 
 # Structured logging
-from app.utils.logging import StructuredLogger, log_session_event, log_claude_sdk_event
+from app.utils.logging import StructuredLogger
+from app.utils.session_storage import PersistentSessionStorage
+from app.services.session_manager import SessionManager
 
 
 class ClaudeService:
     """
-    Simplified Claude Code SDK service using native session management.
+    Enhanced Claude Code SDK service with persistent ClaudeSDKClient management.
 
-    Each working directory becomes its own Claude project root, allowing
-    natural session persistence and working directory isolation.
+    Uses SessionManager for persistent client instances, eliminating session creation
+    overhead and maintaining conversation context across queries.
     """
 
-    def __init__(self, project_root: Path, session_registry: dict = None):
+    def __init__(
+        self,
+        project_root: Path,
+        session_storage: PersistentSessionStorage,
+        session_manager: SessionManager,
+    ):
         self.project_root = project_root
+        self.session_storage = session_storage
+        self.session_manager = session_manager
         self.logger = StructuredLogger(__name__)
 
-        # Use shared session registry from application state if provided,
-        # otherwise create a local one (for backwards compatibility)
-        self.active_sessions = session_registry if session_registry is not None else {}
-
         self.logger.info(
-            "Claude service initialized with simplified session management",
+            "Claude service initialized with SessionManager integration",
             category="session_management",
             operation="init",
             project_root=str(project_root),
-            registry_type="shared" if session_registry is not None else "local"
+            storage_type="persistent",
+            session_manager_enabled=True,
         )
 
     async def create_session(self, request: SessionRequest) -> SessionResponse:
-        """Create a new Claude Code session with working directory as project root."""
+        """Create a new Claude Code session using SessionManager for persistent clients."""
 
         # Use specified working directory or default to project root
-        working_dir = getattr(request, "working_directory", None) or str(self.project_root)
+        working_dir = getattr(request, "working_directory", None) or str(
+            self.project_root
+        )
 
         # Expand user home directory (~) if present
         if working_dir and working_dir.startswith("~"):
@@ -74,31 +79,55 @@ class ClaudeService:
             raise ValueError(f"Working directory does not exist: {working_dir}")
 
         try:
-            # Create Claude SDK session with specified working directory
-            # Claude SDK will automatically create sessions in ~/.claude/projects/[working_dir_hash]
             self.logger.info(
-                f"Creating Claude SDK session with working directory: {working_dir}",
+                f"Creating Claude SDK session with SessionManager: {working_dir}",
                 category="session_management",
                 operation="create_session",
-                working_directory=working_dir
-            )
-
-            response = query(
-                prompt="Session initialized",
-                options=ClaudeCodeOptions(
-                    cwd=working_dir,
-                    permission_mode="bypassPermissions"
-                ),
-            )
-
-            # Extract the actual Claude SDK session ID
-            claude_session_id = await self._extract_session_id(response)
-
-            # Store session in registry for tracking
-            session_response = SessionResponse(
-                session_id=claude_session_id,
+                working_directory=working_dir,
                 user_id=request.user_id,
-                session_name=getattr(request, "session_name", None) or f"Session {claude_session_id[:8]}",
+            )
+
+            # Generate unique session ID for new session
+            session_id = str(uuid.uuid4())
+
+            # Create persistent client through SessionManager (no wasteful initialization)
+            client = await self.session_manager.get_or_create_session(
+                session_id=session_id,
+                working_dir=working_dir,
+                user_id=request.user_id,
+                is_new_session=True,
+            )
+
+            # Get actual session ID from client (may be different from generated one)
+            actual_session_id = getattr(client, "session_id", session_id)
+
+            self.logger.info(
+                "SessionManager created persistent client",
+                category="session_management",
+                operation="session_manager_create",
+                session_id=actual_session_id,
+                user_id=request.user_id,
+                working_directory=working_dir,
+            )
+
+            # Store session metadata persistently for UI listing
+            session_name = (
+                getattr(request, "session_name", None)
+                or f"Session {actual_session_id[:8]}"
+            )
+            self.session_storage.store_session(
+                session_id=actual_session_id,
+                user_id=request.user_id,
+                working_directory=working_dir,
+                session_name=session_name,
+                created_at=datetime.utcnow(),
+            )
+
+            # Create session response
+            session_response = SessionResponse(
+                session_id=actual_session_id,
+                user_id=request.user_id,
+                session_name=session_name,
                 status=SessionStatus.ACTIVE,
                 messages=[],
                 created_at=datetime.utcnow(),
@@ -107,21 +136,13 @@ class ClaudeService:
                 context={"working_directory": working_dir},
             )
 
-            # Register session in memory for listing and validation
-            self.active_sessions[claude_session_id] = {
-                "user_id": request.user_id,
-                "session_response": session_response,
-                "working_directory": working_dir,
-                "created_at": datetime.utcnow(),
-            }
-
             self.logger.info(
-                "Session created successfully and registered",
+                "Session created successfully with SessionManager",
                 category="session_management",
-                session_id=claude_session_id,
+                session_id=actual_session_id,
                 user_id=request.user_id,
-                operation="create_session",
-                working_directory=working_dir
+                operation="create_session_complete",
+                working_directory=working_dir,
             )
 
             return session_response
@@ -131,87 +152,50 @@ class ClaudeService:
                 f"Session creation failed: {e}",
                 category="session_management",
                 user_id=request.user_id,
-                operation="create_session",
+                operation="create_session_failed",
                 working_directory=working_dir,
-                error=str(e)
+                error=str(e),
             )
             raise RuntimeError(f"Failed to create session: {e}")
-
-    async def _extract_session_id(self, response) -> str:
-        """Extract Claude SDK session ID from response.
-
-        The session ID is available in the first SystemMessage with subtype 'init'
-        in the data field as 'session_id'.
-        """
-        try:
-            session_id = None
-
-            async for message in response:
-                # Check for SystemMessage with init subtype containing session ID
-                if (hasattr(message, 'data') and
-                    hasattr(message, 'subtype') and
-                    message.subtype == 'init' and
-                    'session_id' in message.data):
-                    session_id = message.data['session_id']
-                    self.logger.info(
-                        f"Extracted Claude SDK session ID: {session_id}",
-                        category="session_management",
-                        operation="extract_session_id"
-                    )
-                    break
-
-            if not session_id:
-                raise RuntimeError("Failed to extract session ID from Claude SDK response - no init message found")
-
-            return session_id
-
-        except Exception as e:
-            self.logger.error(
-                f"Session ID extraction failed: {e}",
-                category="session_management",
-                operation="extract_session_id",
-                error=str(e)
-            )
-            raise RuntimeError(f"Failed to extract session ID: {e}")
 
     async def query(
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> ClaudeQueryResponse:
-        """Send a query to Claude using session resumption with working directory."""
+        """Send a query to Claude using persistent SessionManager clients."""
 
         try:
             start_time = datetime.utcnow()
 
-            # Get working directory from session context (stored during creation)
-            session_data = self.active_sessions.get(request.session_id)
-            if not session_data:
+            # Get working directory from persistent session storage
+            session_metadata = self.session_storage.get_session(request.session_id)
+            if not session_metadata:
                 raise ValueError(f"Session {request.session_id} not found")
 
-            working_dir = session_data["working_directory"]
+            working_dir = session_metadata["working_directory"]
 
             self.logger.info(
-                f"Querying Claude SDK with session resumption",
+                "Querying Claude SDK with SessionManager persistent client",
                 category="query_execution",
                 session_id=request.session_id,
                 user_id=request.user_id,
                 working_directory=working_dir,
-                operation="query"
+                operation="query",
             )
 
-            # Create proper SDK options with session resumption and working directory
-            sdk_options = ClaudeCodeOptions(
-                cwd=working_dir,  # CRITICAL: Must specify working directory for session resumption
-                model=options.model,
-                resume=request.session_id,  # Claude SDK session resumption
-                permission_mode="bypassPermissions",
+            # Get persistent client from SessionManager
+            client = await self.session_manager.get_or_create_session(
+                session_id=request.session_id,
+                working_dir=working_dir,
+                user_id=request.user_id,
+                is_new_session=False,
             )
 
-            # Send query to Claude SDK
-            response = query(prompt=request.query, options=sdk_options)
+            # Send query to persistent client
+            await client.query(request.query)
 
             # Collect response content
             response_content = ""
-            async for message in response:
+            async for message in client.receive_response():
                 if hasattr(message, "content"):
                     for block in message.content:
                         if hasattr(block, "text"):
@@ -228,6 +212,15 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
+            self.logger.info(
+                "Query completed successfully with SessionManager",
+                category="query_execution",
+                session_id=request.session_id,
+                user_id=request.user_id,
+                operation="query_complete",
+                processing_time=processing_time,
+            )
+
             return ClaudeQueryResponse(
                 session_id=request.session_id,
                 message=assistant_message,
@@ -240,31 +233,31 @@ class ClaudeService:
                 category="query_execution",
                 session_id=request.session_id,
                 user_id=request.user_id,
-                operation="query",
-                error=str(e)
+                operation="query_failed",
+                error=str(e),
             )
             raise RuntimeError(f"Query failed for session {request.session_id}: {e}")
 
     async def stream_response(
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> AsyncGenerator[StreamingChunk, None]:
-        """Stream Claude's response using session resumption."""
+        """Stream Claude's response using persistent SessionManager clients."""
 
         try:
-            # Get working directory from session context (stored during creation)
-            session_data = self.active_sessions.get(request.session_id)
-            if not session_data:
+            # Get working directory from persistent session storage
+            session_metadata = self.session_storage.get_session(request.session_id)
+            if not session_metadata:
                 raise ValueError(f"Session {request.session_id} not found")
 
-            working_dir = session_data["working_directory"]
+            working_dir = session_metadata["working_directory"]
 
             self.logger.info(
-                f"Starting streaming response with session resumption",
+                "Starting streaming response with SessionManager persistent client",
                 category="query_execution",
                 session_id=request.session_id,
                 user_id=request.user_id,
                 working_directory=working_dir,
-                operation="stream_response"
+                operation="stream_response",
             )
 
             # Yield start chunk
@@ -275,19 +268,19 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
-            # Create proper SDK options with session resumption and working directory
-            sdk_options = ClaudeCodeOptions(
-                cwd=working_dir,  # CRITICAL: Must specify working directory for session resumption
-                model=options.model,
-                resume=request.session_id,  # Claude SDK session resumption
-                permission_mode="bypassPermissions",
+            # Get persistent client from SessionManager
+            client = await self.session_manager.get_or_create_session(
+                session_id=request.session_id,
+                working_dir=working_dir,
+                user_id=request.user_id,
+                is_new_session=False,
             )
 
-            # Send query to Claude SDK
-            response = query(prompt=request.query, options=sdk_options)
+            # Send query to persistent client
+            await client.query(request.query)
 
             # Stream response chunks with mobile optimization
-            async for message in response:
+            async for message in client.receive_response():
                 if hasattr(message, "content"):
                     for block in message.content:
                         if hasattr(block, "text"):
@@ -311,14 +304,22 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
+            self.logger.info(
+                "Streaming response completed successfully with SessionManager",
+                category="query_execution",
+                session_id=request.session_id,
+                user_id=request.user_id,
+                operation="stream_response_complete",
+            )
+
         except Exception as e:
             self.logger.error(
                 f"Streaming failed: {e}",
                 category="query_execution",
                 session_id=request.session_id,
                 user_id=request.user_id,
-                operation="stream_response",
-                error=str(e)
+                operation="stream_response_failed",
+                error=str(e),
             )
 
             # Yield error chunk
@@ -332,31 +333,30 @@ class ClaudeService:
     async def get_session(
         self, session_id: str, user_id: str
     ) -> Optional[SessionResponse]:
-        """Get session details from in-memory registry."""
+        """Get session details from persistent storage."""
 
         try:
-            # Check if session exists in our registry
-            if session_id not in self.active_sessions:
+            # Get session from persistent storage
+            session_metadata = self.session_storage.get_session(session_id)
+            if not session_metadata:
                 self.logger.debug(
-                    "Session not found in registry",
+                    "Session not found in storage",
                     category="session_management",
                     session_id=session_id,
                     user_id=user_id,
-                    operation="get_session"
+                    operation="get_session",
                 )
                 return None
 
-            session_data = self.active_sessions[session_id]
-
             # Verify user access
-            if session_data["user_id"] != user_id:
+            if session_metadata.get("user_id") != user_id:
                 self.logger.warning(
                     "Session access denied - user mismatch",
                     category="session_management",
                     session_id=session_id,
                     user_id=user_id,
-                    session_user_id=session_data["user_id"],
-                    operation="get_session"
+                    session_user_id=session_metadata.get("user_id"),
+                    operation="get_session",
                 )
                 return None
 
@@ -365,10 +365,33 @@ class ClaudeService:
                 category="session_management",
                 session_id=session_id,
                 user_id=user_id,
-                operation="get_session"
+                operation="get_session",
             )
 
-            return session_data["session_response"]
+            # Convert metadata to SessionResponse
+            from datetime import datetime
+
+            session_response = SessionResponse(
+                session_id=session_id,
+                user_id=user_id,
+                session_name=session_metadata.get(
+                    "session_name", f"Session {session_id[:8]}"
+                ),
+                status=SessionStatus.ACTIVE,
+                messages=[],  # Messages are handled by Claude SDK
+                created_at=datetime.fromisoformat(session_metadata.get("created_at")),
+                updated_at=datetime.fromisoformat(
+                    session_metadata.get(
+                        "updated_at", session_metadata.get("created_at")
+                    )
+                ),
+                message_count=0,  # Will be populated from Claude SDK if needed
+                context={
+                    "working_directory": session_metadata.get("working_directory")
+                },
+            )
+
+            return session_response
 
         except Exception as e:
             self.logger.error(
@@ -377,38 +400,70 @@ class ClaudeService:
                 session_id=session_id,
                 user_id=user_id,
                 operation="get_session",
-                error=str(e)
+                error=str(e),
             )
             return None
 
     async def list_user_sessions(
         self, user_id: str, limit: int = 10, offset: int = 0
     ) -> List[SessionResponse]:
-        """List user sessions from in-memory registry."""
+        """List user sessions from persistent storage."""
 
         try:
-            # Filter sessions by user_id
-            user_sessions = []
-            for session_id, session_data in self.active_sessions.items():
-                if session_data["user_id"] == user_id:
-                    user_sessions.append(session_data["session_response"])
-
-            # Sort by creation time (newest first)
-            user_sessions.sort(key=lambda s: s.created_at, reverse=True)
-
-            # Apply pagination
-            paginated_sessions = user_sessions[offset:offset + limit]
-
-            self.logger.debug(
-                f"Found {len(user_sessions)} sessions for user, returning {len(paginated_sessions)}",
-                category="session_management",
-                user_id=user_id,
-                total_sessions=len(user_sessions),
-                returned_sessions=len(paginated_sessions),
-                operation="list_user_sessions"
+            # Get sessions from persistent storage
+            session_metadata_list = self.session_storage.list_user_sessions(
+                user_id, limit, offset
             )
 
-            return paginated_sessions
+            # Convert to SessionResponse objects
+            session_responses = []
+            for session_metadata in session_metadata_list:
+                try:
+                    from datetime import datetime
+
+                    session_response = SessionResponse(
+                        session_id=session_metadata.get("session_id"),
+                        user_id=session_metadata.get("user_id"),
+                        session_name=session_metadata.get(
+                            "session_name",
+                            f"Session {session_metadata.get('session_id', '')[:8]}",
+                        ),
+                        status=SessionStatus.ACTIVE,
+                        messages=[],  # Messages are handled by Claude SDK
+                        created_at=datetime.fromisoformat(
+                            session_metadata.get("created_at")
+                        ),
+                        updated_at=datetime.fromisoformat(
+                            session_metadata.get(
+                                "updated_at", session_metadata.get("created_at")
+                            )
+                        ),
+                        message_count=0,  # Will be populated from Claude SDK if needed
+                        context={
+                            "working_directory": session_metadata.get(
+                                "working_directory"
+                            )
+                        },
+                    )
+                    session_responses.append(session_response)
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to convert session metadata to response: {e}",
+                        category="session_management",
+                        session_id=session_metadata.get("session_id"),
+                        operation="list_user_sessions",
+                    )
+
+            self.logger.debug(
+                f"Found {len(session_metadata_list)} sessions for user, returning {len(session_responses)}",
+                category="session_management",
+                user_id=user_id,
+                total_sessions=len(session_metadata_list),
+                returned_sessions=len(session_responses),
+                operation="list_user_sessions",
+            )
+
+            return session_responses
 
         except Exception as e:
             self.logger.error(
@@ -416,6 +471,6 @@ class ClaudeService:
                 category="session_management",
                 user_id=user_id,
                 operation="list_user_sessions",
-                error=str(e)
+                error=str(e),
             )
             return []

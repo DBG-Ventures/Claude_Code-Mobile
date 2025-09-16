@@ -160,7 +160,10 @@ async def health(request: Request):
             "claude_sdk": "available",
             "streaming": "available",
             "sessions": "available",
-            "session_storage": "available" if len(session_info) > 0 and not session_info.get("session_verification_error") else "error",
+            "session_storage": "available"
+            if len(session_info) > 0
+            and not session_info.get("session_verification_error")
+            else "error",
         },
     )
 
