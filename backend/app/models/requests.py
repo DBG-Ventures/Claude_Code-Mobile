@@ -28,6 +28,9 @@ class SessionRequest(BaseModel):
         default_factory=ClaudeCodeOptions, description="Claude SDK configuration"
     )
     session_name: Optional[str] = Field(None, description="Optional session name")
+    working_directory: Optional[str] = Field(
+        None, description="Working directory for Claude SDK session storage"
+    )
     context: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="Additional context"
     )
@@ -37,9 +40,9 @@ class ClaudeQueryRequest(BaseModel):
     """Request to send a query to Claude within a session."""
 
     query: str = Field(..., min_length=1, description="Query text for Claude")
-    session_id: Optional[str] = Field(None, description="Session identifier")
-    user_id: Optional[str] = Field("default_user", description="User making the request")
-    stream: bool = Field(True, description="Whether to stream the response")
+    session_id: str = Field(..., description="Claude SDK session identifier (required)")
+    user_id: str = Field(..., description="User making the request")
+    stream: bool = Field(True, description="Enable streaming response")
     options: Optional[ClaudeCodeOptions] = Field(
         default_factory=ClaudeCodeOptions, description="Claude Code options"
     )

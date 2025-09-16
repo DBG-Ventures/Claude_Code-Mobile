@@ -1,14 +1,16 @@
 """
-Claude Code SDK service wrapper with native session management.
+Claude Code SDK service with direct session management and working directory consistency.
 
-Uses Claude Code SDK's built-in session resumption for conversation continuity
-across multiple queries, eliminating the need for manual session management.
+Eliminates unnecessary session mapping layer and uses Claude SDK session IDs directly
+for reliable session persistence across FastAPI worker restarts and Docker deployments.
 """
 
 import uuid
 import asyncio
+import os
+from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Optional, AsyncGenerator, List
+from typing import Optional, AsyncGenerator, List
 
 from app.models.requests import (
     ClaudeQueryRequest,
@@ -30,162 +32,99 @@ from claude_code_sdk import query
 from claude_code_sdk.types import ClaudeCodeOptions
 
 
-class SessionManager:
-    """Manages Claude Code SDK sessions using native session resumption."""
-
-    def __init__(self):
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._user_sessions: Dict[str, List[str]] = {}
-        self._claude_session_ids: Dict[str, str] = {}  # Maps our session_id to Claude SDK session_id
-
-    def create_session(self, user_id: str, session_name: Optional[str] = None) -> str:
-        """Create a new session metadata."""
-        session_id = str(uuid.uuid4())
-        now = datetime.utcnow()
-
-        session_data = {
-            "session_id": session_id,
-            "user_id": user_id,
-            "session_name": session_name
-            or f"Session {len(self._user_sessions.get(user_id, [])) + 1}",
-            "status": SessionStatus.ACTIVE,
-            "created_at": now,
-            "updated_at": now,
-            "context": {},
-            "message_count": 0,
-        }
-
-        self._sessions[session_id] = session_data
-
-        # Track user sessions
-        if user_id not in self._user_sessions:
-            self._user_sessions[user_id] = []
-        self._user_sessions[user_id].append(session_id)
-
-        return session_id
-
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session data by ID."""
-        return self._sessions.get(session_id)
-
-    def get_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all sessions for a user."""
-        session_ids = self._user_sessions.get(user_id, [])
-        return [
-            self._sessions[sid]
-            for sid in session_ids
-            if sid in self._sessions
-        ]
-
-    def set_claude_session_id(self, session_id: str, claude_session_id: str) -> None:
-        """Map our session ID to Claude SDK session ID."""
-        self._claude_session_ids[session_id] = claude_session_id
-
-    def get_claude_session_id(self, session_id: str) -> Optional[str]:
-        """Get Claude SDK session ID for resumption."""
-        return self._claude_session_ids.get(session_id)
-
-    def update_session_status(self, session_id: str, status: SessionStatus) -> None:
-        """Update session status."""
-        if session_id in self._sessions:
-            self._sessions[session_id]["status"] = status
-            self._sessions[session_id]["updated_at"] = datetime.utcnow()
-
-    def increment_message_count(self, session_id: str) -> None:
-        """Increment message count for a session."""
-        if session_id in self._sessions:
-            self._sessions[session_id]["message_count"] += 1
-            self._sessions[session_id]["updated_at"] = datetime.utcnow()
-
-
 class ClaudeService:
     """
-    Service for interacting with Claude Code SDK using native session management.
+    Service for interacting with Claude Code SDK with direct session usage.
 
-    Uses Claude SDK's built-in session resumption to maintain conversation
-    context across multiple queries without manual session management.
+    Eliminates session mapping layer and uses Claude SDK session IDs directly
+    for reliable session persistence with consistent working directory management.
     """
 
-    def __init__(self):
-        self.session_manager = SessionManager()
+    def __init__(self, project_root: Path):
+        self.project_root = project_root
+        self._ensure_working_directory()
+
+    def _ensure_working_directory(self):
+        """Ensure working directory is set correctly before Claude SDK operations."""
+        current_cwd = Path.cwd()
+        if current_cwd != self.project_root:
+            print(
+                f"⚠️  Working directory mismatch: {current_cwd} != {self.project_root}"
+            )
+            os.chdir(self.project_root)
+            print(f"✅ Working directory corrected to: {self.project_root}")
 
     async def create_session(self, request: SessionRequest) -> SessionResponse:
-        """Create a new Claude Code session."""
-        session_id = self.session_manager.create_session(
-            user_id=request.user_id,
-            session_name=request.session_name
+        """Create a new Claude Code session using direct SDK integration."""
+        # Ensure working directory consistency
+        self._ensure_working_directory()
+
+        # Use specified working directory or default to project root
+        working_dir = getattr(request, "working_directory", None) or str(
+            self.project_root
         )
 
-        session_data = self.session_manager.get_session(session_id)
-        if not session_data:
-            raise ValueError("Failed to create session")
+        try:
+            # Initialize Claude SDK session with explicit working directory
+            response = query(
+                prompt="Session initialized",
+                options=ClaudeCodeOptions(
+                    cwd=working_dir, permission_mode="bypassPermissions"
+                ),
+            )
 
-        return SessionResponse(
-            session_id=session_data["session_id"],
-            user_id=session_data["user_id"],
-            session_name=session_data["session_name"],
-            status=session_data["status"],
-            messages=[],
-            created_at=session_data["created_at"],
-            updated_at=session_data["updated_at"],
-            message_count=0,
-            context=session_data["context"],
-        )
+            # Extract Claude SDK session ID directly
+            claude_session_id = await self._extract_session_id(response)
+
+            return SessionResponse(
+                session_id=claude_session_id,  # Use Claude SDK session ID directly
+                user_id=request.user_id,
+                session_name=request.session_name or f"Session {claude_session_id[:8]}",
+                status=SessionStatus.ACTIVE,
+                messages=[],
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                message_count=0,
+                context=getattr(request, "context", {}),
+            )
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to create Claude session: {e}")
 
     async def query(
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> ClaudeQueryResponse:
         """
-        Send a query to Claude using SDK native session resumption.
+        Send a query to Claude using direct SDK session resumption.
 
-        Uses Claude SDK's built-in session management to maintain conversation context.
+        Uses Claude SDK session ID directly without mapping layer.
         """
-        session = self.session_manager.get_session(request.session_id)
-        if not session:
-            raise ValueError(f"Session {request.session_id} not found")
+        # Ensure working directory consistency
+        self._ensure_working_directory()
 
         try:
             start_time = datetime.utcnow()
 
-            # Get Claude session ID if available for resumption
-            claude_session_id = self.session_manager.get_claude_session_id(request.session_id)
-
-            # Create proper SDK options object
+            # Create proper SDK options object with direct session resumption
             sdk_options = ClaudeCodeOptions(
+                cwd=str(self.project_root),
                 model=options.model,  # Use default model if None
-                resume=claude_session_id,  # This enables session resumption
+                resume=request.session_id,  # Direct Claude SDK session ID
                 permission_mode="bypassPermissions",  # Allow all tools for mobile use
             )
 
             # Send query to Claude SDK
-            response = query(
-                prompt=request.query,
-                options=sdk_options
-            )
+            response = query(prompt=request.query, options=sdk_options)
 
-            # Collect response and extract session ID
+            # Collect response content
             response_content = ""
-            new_claude_session_id = None
 
             async for message in response:
-                # Extract session ID from SystemMessage with init subtype
-                if hasattr(message, 'subtype') and message.subtype == 'init':
-                    if hasattr(message, 'data') and 'session_id' in message.data:
-                        new_claude_session_id = message.data['session_id']
-
                 # Extract text content
                 if hasattr(message, "content"):
                     for block in message.content:
                         if hasattr(block, "text"):
                             response_content += block.text
-
-            # Store Claude session ID for future resumption
-            if new_claude_session_id:
-                self.session_manager.set_claude_session_id(request.session_id, new_claude_session_id)
-
-            # Increment message count (user + assistant)
-            self.session_manager.increment_message_count(request.session_id)
-            self.session_manager.increment_message_count(request.session_id)
 
             processing_time = (datetime.utcnow() - start_time).total_seconds()
 
@@ -205,22 +144,18 @@ class ClaudeService:
             )
 
         except Exception as e:
-            self.session_manager.update_session_status(
-                request.session_id, SessionStatus.ERROR
-            )
-            raise e
+            raise RuntimeError(f"Query failed for session {request.session_id}: {e}")
 
     async def stream_response(
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> AsyncGenerator[StreamingChunk, None]:
         """
-        Stream Claude's response using SDK native session resumption.
+        Stream Claude's response using direct SDK session resumption with mobile optimization.
 
-        Uses Claude SDK's built-in session management to maintain conversation context.
+        Preserves 0.01s delays for mobile optimization as specified in PRP.
         """
-        session = self.session_manager.get_session(request.session_id)
-        if not session:
-            raise ValueError(f"Session {request.session_id} not found")
+        # Ensure working directory consistency
+        self._ensure_working_directory()
 
         try:
             # Yield start chunk
@@ -231,38 +166,24 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
-            # Get Claude session ID if available for resumption
-            claude_session_id = self.session_manager.get_claude_session_id(request.session_id)
-
-            # Create proper SDK options object
+            # Create proper SDK options object with direct session resumption
             sdk_options = ClaudeCodeOptions(
+                cwd=str(self.project_root),
                 model=options.model,  # Use default model if None
-                resume=claude_session_id,  # This enables session resumption
+                resume=request.session_id,  # Direct Claude SDK session ID
                 permission_mode="bypassPermissions",  # Allow all tools for mobile use
             )
 
             # Send query to Claude SDK
-            response = query(
-                prompt=request.query,
-                options=sdk_options
-            )
+            response = query(prompt=request.query, options=sdk_options)
 
-            # Stream response chunks
-            accumulated_content = ""
-            new_claude_session_id = None
-
+            # Stream response chunks with mobile optimization
             async for message in response:
-                # Extract session ID from SystemMessage with init subtype
-                if hasattr(message, 'subtype') and message.subtype == 'init':
-                    if hasattr(message, 'data') and 'session_id' in message.data:
-                        new_claude_session_id = message.data['session_id']
-
                 # Extract and yield text content
                 if hasattr(message, "content"):
                     for block in message.content:
                         if hasattr(block, "text"):
                             chunk_text = block.text
-                            accumulated_content += chunk_text
 
                             yield StreamingChunk(
                                 chunk_type=ChunkType.DELTA,
@@ -271,13 +192,8 @@ class ClaudeService:
                                 session_id=request.session_id,
                             )
 
-            # Store Claude session ID for future resumption
-            if new_claude_session_id:
-                self.session_manager.set_claude_session_id(request.session_id, new_claude_session_id)
-
-            # Increment message count (user + assistant)
-            self.session_manager.increment_message_count(request.session_id)
-            self.session_manager.increment_message_count(request.session_id)
+                            # Mobile optimization - preserve existing pattern
+                            await asyncio.sleep(0.01)
 
             # Yield completion chunk
             yield StreamingChunk(
@@ -296,75 +212,85 @@ class ClaudeService:
                 message_id=str(uuid.uuid4()),
                 session_id=request.session_id,
             )
-
-            self.session_manager.update_session_status(
-                request.session_id, SessionStatus.ERROR
-            )
             raise e
 
-    async def get_sessions(self, user_id: str) -> List[SessionResponse]:
-        """Get all sessions for a user."""
-        sessions_data = self.session_manager.get_user_sessions(user_id)
+    async def _extract_session_id(self, response) -> str:
+        """Extract Claude SDK session ID from response stream."""
+        session_id = None
 
-        return [
-            SessionResponse(
-                session_id=session["session_id"],
-                user_id=session["user_id"],
-                session_name=session["session_name"],
-                status=session["status"],
-                messages=[],  # Messages are handled by Claude SDK
-                created_at=session["created_at"],
-                updated_at=session["updated_at"],
-                message_count=session["message_count"],
-                context=session["context"],
-            )
-            for session in sessions_data
-        ]
+        async for message in response:
+            if hasattr(message, "subtype") and message.subtype == "init":
+                if hasattr(message, "data") and "session_id" in message.data:
+                    session_id = message.data["session_id"]
+                    break
+            elif hasattr(message, "system_message") and hasattr(
+                message.system_message, "session_id"
+            ):
+                session_id = message.system_message.session_id
+                break
+
+        if not session_id:
+            raise RuntimeError("Failed to extract session ID from Claude SDK response")
+
+        return session_id
+
+    async def verify_session_exists(self, session_id: str) -> bool:
+        """Verify if a Claude SDK session exists by checking file system."""
+        sessions_path = (
+            Path.home()
+            / ".claude"
+            / "projects"
+            / f"-{str(self.project_root).replace('/', '-')}"
+        )
+        session_file = sessions_path / f"{session_id}.jsonl"
+        return session_file.exists()
+
+    async def list_sessions(self) -> List[str]:
+        """List available Claude SDK session IDs from file system."""
+        sessions_path = (
+            Path.home()
+            / ".claude"
+            / "projects"
+            / f"-{str(self.project_root).replace('/', '-')}"
+        )
+
+        if not sessions_path.exists():
+            return []
+
+        session_files = list(sessions_path.glob("*.jsonl"))
+        return [f.stem for f in session_files]
 
     async def get_session(
         self, session_id: str, user_id: str
     ) -> Optional[SessionResponse]:
-        """Get session details."""
-        session_data = self.session_manager.get_session(session_id)
-        if not session_data or session_data["user_id"] != user_id:
-            return None
-
-        return SessionResponse(
-            session_id=session_data["session_id"],
-            user_id=session_data["user_id"],
-            session_name=session_data["session_name"],
-            status=session_data["status"],
-            messages=[],  # Messages are handled by Claude SDK
-            created_at=session_data["created_at"],
-            updated_at=session_data["updated_at"],
-            message_count=session_data["message_count"],
-            context=session_data["context"],
-        )
+        """Get session details by verifying existence in Claude SDK storage."""
+        if await self.verify_session_exists(session_id):
+            return SessionResponse(
+                session_id=session_id,
+                user_id=user_id,
+                session_name=f"Session {session_id[:8]}",
+                status=SessionStatus.ACTIVE,
+                messages=[],  # Messages are handled by Claude SDK file storage
+                created_at=datetime.utcnow(),  # Could be read from file metadata
+                updated_at=datetime.utcnow(),
+                message_count=0,  # Could be calculated from file content
+                context={},
+            )
+        return None
 
     async def list_user_sessions(
         self, user_id: str, limit: int = 10, offset: int = 0
     ) -> List[SessionResponse]:
-        """List sessions for a user with pagination."""
-        sessions_data = self.session_manager.get_user_sessions(user_id)
+        """List sessions from Claude SDK storage with pagination."""
+        all_session_ids = await self.list_sessions()
 
         # Apply pagination
-        paginated_sessions = sessions_data[offset:offset + limit]
+        paginated_session_ids = all_session_ids[offset : offset + limit]
 
-        return [
-            SessionResponse(
-                session_id=session["session_id"],
-                user_id=session["user_id"],
-                session_name=session["session_name"],
-                status=session["status"],
-                messages=[],  # Messages are handled by Claude SDK
-                created_at=session["created_at"],
-                updated_at=session["updated_at"],
-                message_count=session["message_count"],
-                context=session["context"],
-            )
-            for session in paginated_sessions
-        ]
+        sessions = []
+        for session_id in paginated_session_ids:
+            session = await self.get_session(session_id, user_id)
+            if session:
+                sessions.append(session)
 
-
-# Global service instance
-claude_service = ClaudeService()
+        return sessions

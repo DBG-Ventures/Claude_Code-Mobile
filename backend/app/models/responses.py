@@ -57,12 +57,12 @@ class StreamingChunk(BaseModel):
     """Individual chunk in a streaming response."""
 
     content: Optional[str] = Field(None, description="Chunk content")
-    chunk_type: ChunkType = Field(
-        ChunkType.DELTA, description="Type of chunk"
-    )
+    chunk_type: ChunkType = Field(ChunkType.DELTA, description="Type of chunk")
     message_id: Optional[str] = Field(None, description="Associated message ID")
     session_id: Optional[str] = Field(None, description="Session identifier")
-    error: Optional[str] = Field(None, description="Error message if chunk_type is error")
+    error: Optional[str] = Field(
+        None, description="Error message if chunk_type is error"
+    )
     message: Optional[str] = Field(None, description="Optional status message")
     timestamp: datetime = Field(
         default_factory=datetime.utcnow, description="Chunk timestamp"

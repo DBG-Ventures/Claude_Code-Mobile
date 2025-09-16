@@ -36,13 +36,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     ENVIRONMENT=production
 
-# Create non-root user for security
+# Create non-root user for security with home directory
 RUN groupadd -r claude && \
-    useradd -r -g claude -u 1001 claude
+    useradd -r -g claude -u 1001 -m claude
 
-# Install runtime dependencies
+# Install runtime dependencies including Node.js for Claude Code SDK
 RUN apt-get update && apt-get install -y \
     curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -86,11 +90,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ENVIRONMENT=development
 
-# Install development dependencies
+# Install development dependencies including Node.js for Claude Code SDK
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
     && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security with home directory
+RUN groupadd -r claude && \
+    useradd -r -g claude -u 1001 -m claude
 
 WORKDIR /app
 
@@ -100,8 +112,11 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt && \
     pip install uvicorn[standard] watchfiles
 
-# Copy application code
-COPY . .
+# Copy application code and change ownership
+COPY --chown=claude:claude . .
+
+# Switch to non-root user
+USER claude
 
 # Expose port
 EXPOSE 8000

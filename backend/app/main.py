@@ -7,7 +7,6 @@ and router registration for Claude Code mobile client support.
 
 import os
 from datetime import datetime
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,26 +15,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api import claude
 from app.models.responses import ErrorResponse, HealthResponse
-from app.services.claude_service import claude_service
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Application lifespan management.
-
-    Handles startup and shutdown events for the FastAPI application.
-    """
-    # Startup
-    print("🚀 Claude Code Mobile Backend starting up...")
-    print(f"⏰ Startup time: {datetime.utcnow().isoformat()}")
-    print("✅ Claude service initialized with persistent session management")
-
-    yield
-
-    # Shutdown
-    print("🛑 Claude Code Mobile Backend shutting down...")
-    print(f"⏰ Shutdown time: {datetime.utcnow().isoformat()}")
+from app.core.lifecycle import lifespan, verify_session_storage
 
 
 # Create FastAPI application
@@ -100,7 +80,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "errors": exc.errors(),
                 "body": str(exc.body) if hasattr(exc, "body") else None,
             },
-        ).model_dump(mode='json'),
+        ).model_dump(mode="json"),
     )
 
 
@@ -113,7 +93,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             error="http_error",
             message=exc.detail,
             details={"status_code": exc.status_code},
-        ).model_dump(mode='json'),
+        ).model_dump(mode="json"),
     )
 
 
@@ -128,7 +108,7 @@ async def general_exception_handler(request: Request, exc: Exception):
             details={"type": type(exc).__name__}
             if os.getenv("DEBUG") == "true"
             else None,
-        ).model_dump(mode='json'),
+        ).model_dump(mode="json"),
     )
 
 
@@ -151,8 +131,27 @@ async def root():
 
 # Health check endpoint
 @app.get("/health", response_model=HealthResponse)
-async def health():
+async def health(request: Request):
     """Comprehensive health check for monitoring and deployment."""
+    # Get session storage verification if project_root is available
+    session_info = {}
+    if hasattr(request.app.state, "project_root"):
+        try:
+            session_verification = verify_session_storage(
+                request.app.state.project_root
+            )
+            session_info = {
+                "working_directory_correct": session_verification[
+                    "working_directory_correct"
+                ],
+                "claude_sessions_dir_exists": session_verification[
+                    "project_sessions_dir_exists"
+                ],
+                "session_files_count": session_verification["session_files_count"],
+            }
+        except Exception as e:
+            session_info = {"session_verification_error": str(e)}
+
     return HealthResponse(
         status="healthy",
         timestamp=datetime.utcnow(),
@@ -161,6 +160,7 @@ async def health():
             "claude_sdk": "available",
             "streaming": "available",
             "sessions": "available",
+            "session_storage": "available" if len(session_info) > 0 and not session_info.get("session_verification_error") else "error",
         },
     )
 

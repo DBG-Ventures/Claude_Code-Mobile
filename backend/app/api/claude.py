@@ -8,9 +8,8 @@ streaming capabilities for mobile clients.
 import json
 import asyncio
 from datetime import datetime
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -33,15 +32,10 @@ from app.services.claude_service import ClaudeService
 router = APIRouter(prefix="/claude", tags=["claude"])
 
 
-# Global ClaudeService instance (singleton)
-_claude_service_instance: Optional[ClaudeService] = None
-
-def get_claude_service() -> ClaudeService:
-    """Dependency to provide shared ClaudeService instance."""
-    global _claude_service_instance
-    if _claude_service_instance is None:
-        _claude_service_instance = ClaudeService()
-    return _claude_service_instance
+def get_claude_service(request: Request) -> ClaudeService:
+    """Dependency to provide Claude service with consistent project root."""
+    project_root = request.app.state.project_root
+    return ClaudeService(project_root)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -57,7 +51,9 @@ async def health_check():
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(
-    request: SessionRequest, claude_service: ClaudeService = Depends(get_claude_service)
+    session_request: SessionRequest,
+    request: Request,
+    claude_service: ClaudeService = Depends(get_claude_service),
 ):
     """
     Create a new Claude Code session.
@@ -66,7 +62,7 @@ async def create_session(
     Sessions maintain context across multiple queries.
     """
     try:
-        session = await claude_service.create_session(request)
+        session = await claude_service.create_session(session_request)
         return session
     except Exception as e:
         raise HTTPException(
@@ -76,6 +72,7 @@ async def create_session(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
+    request: Request,
     user_id: str = Query(..., description="User identifier"),
     limit: int = Query(10, ge=1, le=100, description="Maximum sessions to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
@@ -112,6 +109,7 @@ async def list_sessions(
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: str,
+    request: Request,
     user_id: str = Query(..., description="User identifier"),
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
@@ -136,7 +134,8 @@ async def get_session(
 
 @router.post("/query", response_model=ClaudeQueryResponse)
 async def query_claude(
-    request: ClaudeQueryRequest,
+    query_request: ClaudeQueryRequest,
+    request: Request,
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
     """
@@ -146,9 +145,9 @@ async def query_claude(
     Use /claude/stream for real-time streaming responses.
     """
     try:
-        # Use options from request or defaults
-        options = request.options or ClaudeCodeOptions()
-        response = await claude_service.query(request, options)
+        # Use options from query_request or defaults
+        options = query_request.options or ClaudeCodeOptions()
+        response = await claude_service.query(query_request, options)
         return response
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -160,12 +159,13 @@ async def query_claude(
 
 @router.post("/stream")
 async def stream_claude_response(
-    request: ClaudeQueryRequest,
+    query_request: ClaudeQueryRequest,
+    request: Request,
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
-    print(f"🎯 API: Stream endpoint called for session {request.session_id}")
-    print(f"🎯 API: Query: {request.query[:50]}...")
-    print(f"🎯 API: User ID: {request.user_id}")
+    print(f"🎯 API: Stream endpoint called for session {query_request.session_id}")
+    print(f"🎯 API: Query: {query_request.query[:50]}...")
+    print(f"🎯 API: User ID: {query_request.user_id}")
     """
     Stream Claude's response in real-time using Server-Sent Events.
 
@@ -183,12 +183,16 @@ async def stream_claude_response(
 
         Converts StreamingChunk objects to SSE format for real-time transmission.
         """
-        print(f"🎯 API: Starting event generator for session {request.session_id}")
+        print(
+            f"🎯 API: Starting event generator for session {query_request.session_id}"
+        )
         try:
             # Validate session exists
-            print(f"🎯 API: Validating session {request.session_id} for user {request.user_id}")
+            print(
+                f"🎯 API: Validating session {query_request.session_id} for user {query_request.user_id}"
+            )
             session = await claude_service.get_session(
-                request.session_id, request.user_id
+                query_request.session_id, query_request.user_id
             )
             print(f"🎯 API: Session validation result: {session is not None}")
             if not session:
@@ -198,7 +202,7 @@ async def stream_claude_response(
                     "message_id": None,
                     "timestamp": datetime.utcnow().isoformat(),
                     "error": "session_not_found",
-                    "message": f"Session {request.session_id} not found or access denied",
+                    "message": f"Session {query_request.session_id} not found or access denied",
                 }
                 print(f"🎯 API: Sending session not found error: {error_data}")
                 yield {
@@ -216,17 +220,17 @@ async def stream_claude_response(
                         "chunk_type": "start",
                         "message_id": None,
                         "timestamp": datetime.utcnow().isoformat(),
-                        "session_id": request.session_id,
+                        "session_id": query_request.session_id,
                     }
                 ),
             }
 
-            # Use options from request or defaults
-            options = request.options or ClaudeCodeOptions()
+            # Use options from query_request or defaults
+            options = query_request.options or ClaudeCodeOptions()
 
             # Stream Claude response chunks
-            print(f"🎯 API: About to start streaming from Claude service")
-            async for chunk in claude_service.stream_response(request, options):
+            print("🎯 API: About to start streaming from Claude service")
+            async for chunk in claude_service.stream_response(query_request, options):
                 print(f"🎯 API: Received chunk from Claude service: {chunk.chunk_type}")
                 chunk_data = {
                     "content": chunk.content,
@@ -285,7 +289,8 @@ async def stream_claude_response(
 @router.put("/sessions/{session_id}", response_model=SessionResponse)
 async def update_session(
     session_id: str,
-    request: SessionUpdateRequest,
+    update_request: SessionUpdateRequest,
+    request: Request,
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
     """
@@ -293,15 +298,15 @@ async def update_session(
 
     Allows updating session name, status, and context metadata.
     """
-    # Validate request matches path parameter
-    if request.session_id != session_id:
+    # Validate update_request matches path parameter
+    if update_request.session_id != session_id:
         raise HTTPException(
             status_code=400, detail="Session ID in path must match request body"
         )
 
     try:
         # Get current session to verify access
-        session = await claude_service.get_session(session_id, request.user_id)
+        session = await claude_service.get_session(session_id, update_request.user_id)
         if not session:
             raise HTTPException(
                 status_code=404,
@@ -324,6 +329,7 @@ async def update_session(
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: str,
+    request: Request,
     user_id: str = Query(..., description="User identifier"),
     claude_service: ClaudeService = Depends(get_claude_service),
 ):
