@@ -1,0 +1,18 @@
+{
+  "b419833d-5a34-4ee3-9888-ff741f7fc662": {
+    "session_id": "b419833d-5a34-4ee3-9888-ff741f7fc662",
+    "user_id": "test-user-new",
+    "working_directory": "/Users/beardedwonder/Development/DBGVentures/Claude_Code-Mobile",
+    "session_name": "Persistent Test Session",
+    "created_at": "2025-09-16T16:32:13.498180",
+    "updated_at": "2025-09-16T16:32:13.498415"
+  },
+  "api-session-123": {
+    "session_id": "api-session-123",
+    "user_id": "api-user",
+    "working_directory": "/Users/beardedwonder/Development/DBGVentures/Claude_Code-Mobile",
+    "session_name": "API Test Session",
+    "created_at": "2025-09-16T18:40:59.281809",
+    "updated_at": "2025-09-16T18:40:59.281875"
+  }
+}
