@@ -27,6 +27,19 @@ class SessionStatus(str, Enum):
     PAUSED = "paused"
 
 
+class ChunkType(str, Enum):
+    """Streaming chunk type enumeration."""
+
+    START = "start"
+    DELTA = "delta"
+    ASSISTANT = "assistant"
+    THINKING = "thinking"
+    TOOL = "tool"
+    SYSTEM = "system"
+    COMPLETE = "complete"
+    ERROR = "error"
+
+
 class ClaudeMessage(BaseModel):
     """Individual Claude message within a conversation."""
 
@@ -43,11 +56,14 @@ class ClaudeMessage(BaseModel):
 class StreamingChunk(BaseModel):
     """Individual chunk in a streaming response."""
 
-    content: str = Field(..., description="Chunk content")
-    chunk_type: str = Field(
-        "delta", description="Type of chunk (delta, complete, error)"
+    content: Optional[str] = Field(None, description="Chunk content")
+    chunk_type: ChunkType = Field(
+        ChunkType.DELTA, description="Type of chunk"
     )
     message_id: Optional[str] = Field(None, description="Associated message ID")
+    session_id: Optional[str] = Field(None, description="Session identifier")
+    error: Optional[str] = Field(None, description="Error message if chunk_type is error")
+    message: Optional[str] = Field(None, description="Optional status message")
     timestamp: datetime = Field(
         default_factory=datetime.utcnow, description="Chunk timestamp"
     )

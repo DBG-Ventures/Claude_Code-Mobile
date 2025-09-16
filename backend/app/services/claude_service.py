@@ -1,14 +1,14 @@
 """
-Claude Code SDK service wrapper with async session management.
+Claude Code SDK service wrapper with native session management.
 
-Provides async interface to Claude Code SDK with proper context management,
-session persistence, and streaming response support.
+Uses Claude Code SDK's built-in session resumption for conversation continuity
+across multiple queries, eliminating the need for manual session management.
 """
 
 import uuid
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional, AsyncGenerator, List
-from contextlib import asynccontextmanager
 
 from app.models.requests import (
     ClaudeQueryRequest,
@@ -22,21 +22,24 @@ from app.models.responses import (
     MessageRole,
     SessionStatus,
     ClaudeQueryResponse,
+    ChunkType,
 )
 
 # Official Claude Code SDK
-from claude_code_sdk import query, ClaudeSDKClient
+from claude_code_sdk import query
+from claude_code_sdk.types import ClaudeCodeOptions
 
 
 class SessionManager:
-    """Manages active Claude Code sessions."""
+    """Manages Claude Code SDK sessions using native session resumption."""
 
     def __init__(self):
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._user_sessions: Dict[str, List[str]] = {}
+        self._claude_session_ids: Dict[str, str] = {}  # Maps our session_id to Claude SDK session_id
 
     def create_session(self, user_id: str, session_name: Optional[str] = None) -> str:
-        """Create a new session for a user."""
+        """Create a new session metadata."""
         session_id = str(uuid.uuid4())
         now = datetime.utcnow()
 
@@ -46,14 +49,15 @@ class SessionManager:
             "session_name": session_name
             or f"Session {len(self._user_sessions.get(user_id, [])) + 1}",
             "status": SessionStatus.ACTIVE,
-            "messages": [],
             "created_at": now,
             "updated_at": now,
             "context": {},
+            "message_count": 0,
         }
 
         self._sessions[session_id] = session_data
 
+        # Track user sessions
         if user_id not in self._user_sessions:
             self._user_sessions[user_id] = []
         self._user_sessions[user_id].append(session_id)
@@ -64,68 +68,52 @@ class SessionManager:
         """Get session data by ID."""
         return self._sessions.get(session_id)
 
-    def get_user_sessions(
-        self, user_id: str, limit: int = 10, offset: int = 0
-    ) -> List[Dict[str, Any]]:
-        """Get sessions for a user with pagination."""
+    def get_user_sessions(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all sessions for a user."""
         session_ids = self._user_sessions.get(user_id, [])
-        paginated_ids = session_ids[offset : offset + limit]
-        return [self._sessions[sid] for sid in paginated_ids if sid in self._sessions]
+        return [
+            self._sessions[sid]
+            for sid in session_ids
+            if sid in self._sessions
+        ]
 
-    def add_message(self, session_id: str, message: ClaudeMessage) -> bool:
-        """Add a message to a session."""
-        if session_id not in self._sessions:
-            return False
+    def set_claude_session_id(self, session_id: str, claude_session_id: str) -> None:
+        """Map our session ID to Claude SDK session ID."""
+        self._claude_session_ids[session_id] = claude_session_id
 
-        self._sessions[session_id]["messages"].append(message.model_dump())
-        self._sessions[session_id]["updated_at"] = datetime.utcnow()
-        return True
+    def get_claude_session_id(self, session_id: str) -> Optional[str]:
+        """Get Claude SDK session ID for resumption."""
+        return self._claude_session_ids.get(session_id)
 
-    def update_session_status(self, session_id: str, status: SessionStatus) -> bool:
+    def update_session_status(self, session_id: str, status: SessionStatus) -> None:
         """Update session status."""
-        if session_id not in self._sessions:
-            return False
+        if session_id in self._sessions:
+            self._sessions[session_id]["status"] = status
+            self._sessions[session_id]["updated_at"] = datetime.utcnow()
 
-        self._sessions[session_id]["status"] = status
-        self._sessions[session_id]["updated_at"] = datetime.utcnow()
-        return True
+    def increment_message_count(self, session_id: str) -> None:
+        """Increment message count for a session."""
+        if session_id in self._sessions:
+            self._sessions[session_id]["message_count"] += 1
+            self._sessions[session_id]["updated_at"] = datetime.utcnow()
 
 
 class ClaudeService:
     """
-    Service wrapper for Claude Code SDK with async session management.
+    Service for interacting with Claude Code SDK using native session management.
 
-    Provides high-level interface for Claude interactions with proper
-    resource management and session persistence.
+    Uses Claude SDK's built-in session resumption to maintain conversation
+    context across multiple queries without manual session management.
     """
 
     def __init__(self):
         self.session_manager = SessionManager()
 
-    def _prepare_sdk_kwargs(self, options: RequestOptions) -> dict:
-        """Convert request options to SDK keyword arguments."""
-        sdk_kwargs = {}
-        if options.api_key:
-            sdk_kwargs['api_key'] = options.api_key
-        # Note: Claude Code SDK client constructor only accepts 'api_key' parameter
-        # Other options like model, max_tokens, temperature, timeout are passed
-        # to individual query methods, not the client constructor
-        return sdk_kwargs
-
-    @asynccontextmanager
-    async def _get_claude_client(self, sdk_kwargs: dict):
-        """
-        Async context manager for Claude SDK client.
-
-        CRITICAL: Uses async with pattern required for proper resource cleanup.
-        """
-        async with ClaudeSDKClient(**sdk_kwargs) as client:
-            yield client
-
     async def create_session(self, request: SessionRequest) -> SessionResponse:
         """Create a new Claude Code session."""
         session_id = self.session_manager.create_session(
-            user_id=request.user_id, session_name=request.session_name
+            user_id=request.user_id,
+            session_name=request.session_name
         )
 
         session_data = self.session_manager.get_session(session_id)
@@ -148,281 +136,208 @@ class ClaudeService:
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> ClaudeQueryResponse:
         """
-        Send a query to Claude and return the complete response.
+        Send a query to Claude using SDK native session resumption.
 
-        For non-streaming use cases where the full response is needed.
+        Uses Claude SDK's built-in session management to maintain conversation context.
         """
         session = self.session_manager.get_session(request.session_id)
         if not session:
             raise ValueError(f"Session {request.session_id} not found")
 
-        # Add user message to session
-        user_message = ClaudeMessage(
-            id=str(uuid.uuid4()),
-            content=request.query,
-            role=MessageRole.USER,
-            timestamp=datetime.utcnow(),
-            session_id=request.session_id,
-        )
-        self.session_manager.add_message(request.session_id, user_message)
-
-        # Get Claude response
-        sdk_kwargs = self._prepare_sdk_kwargs(options)
-
         try:
-            async with self._get_claude_client(sdk_kwargs) as client:
-                start_time = datetime.utcnow()
+            start_time = datetime.utcnow()
 
-                # Send query to Claude
-                await client.query(request.query)
+            # Get Claude session ID if available for resumption
+            claude_session_id = self.session_manager.get_claude_session_id(request.session_id)
 
-                # Collect full response
-                response_content = ""
-                async for message in client.receive_response():
-                    if hasattr(message, "content"):
-                        for block in message.content:
-                            if hasattr(block, "text"):
-                                response_content += block.text
+            # Create proper SDK options object
+            sdk_options = ClaudeCodeOptions(
+                model=options.model,  # Use default model if None
+                resume=claude_session_id,  # This enables session resumption
+                permission_mode="bypassPermissions",  # Allow all tools for mobile use
+            )
 
-                processing_time = (datetime.utcnow() - start_time).total_seconds()
+            # Send query to Claude SDK
+            response = query(
+                prompt=request.query,
+                options=sdk_options
+            )
 
-                # Create assistant message
-                assistant_message = ClaudeMessage(
-                    id=str(uuid.uuid4()),
-                    content=response_content,
-                    role=MessageRole.ASSISTANT,
-                    timestamp=datetime.utcnow(),
-                    session_id=request.session_id,
-                )
+            # Collect response and extract session ID
+            response_content = ""
+            new_claude_session_id = None
 
-                # Add to session
-                self.session_manager.add_message(request.session_id, assistant_message)
+            async for message in response:
+                # Extract session ID from SystemMessage with init subtype
+                if hasattr(message, 'subtype') and message.subtype == 'init':
+                    if hasattr(message, 'data') and 'session_id' in message.data:
+                        new_claude_session_id = message.data['session_id']
 
-                return ClaudeQueryResponse(
-                    session_id=request.session_id,
-                    message=assistant_message,
-                    status="completed",
-                    processing_time=processing_time,
-                )
+                # Extract text content
+                if hasattr(message, "content"):
+                    for block in message.content:
+                        if hasattr(block, "text"):
+                            response_content += block.text
+
+            # Store Claude session ID for future resumption
+            if new_claude_session_id:
+                self.session_manager.set_claude_session_id(request.session_id, new_claude_session_id)
+
+            # Increment message count (user + assistant)
+            self.session_manager.increment_message_count(request.session_id)
+            self.session_manager.increment_message_count(request.session_id)
+
+            processing_time = (datetime.utcnow() - start_time).total_seconds()
+
+            # Create assistant message response
+            assistant_message = ClaudeMessage(
+                id=str(uuid.uuid4()),
+                content=response_content,
+                role=MessageRole.ASSISTANT,
+                timestamp=datetime.utcnow(),
+                session_id=request.session_id,
+            )
+
+            return ClaudeQueryResponse(
+                session_id=request.session_id,
+                message=assistant_message,
+                processing_time=processing_time,
+            )
 
         except Exception as e:
             self.session_manager.update_session_status(
                 request.session_id, SessionStatus.ERROR
             )
-            raise RuntimeError(f"Claude query failed: {str(e)}")
+            raise e
 
     async def stream_response(
         self, request: ClaudeQueryRequest, options: RequestOptions
     ) -> AsyncGenerator[StreamingChunk, None]:
         """
-        Stream Claude's response in real-time chunks.
+        Stream Claude's response using SDK native session resumption.
 
-        CRITICAL: This is the main method for mobile client streaming.
-        Yields StreamingChunk objects for SSE transmission.
+        Uses Claude SDK's built-in session management to maintain conversation context.
         """
         session = self.session_manager.get_session(request.session_id)
         if not session:
             raise ValueError(f"Session {request.session_id} not found")
 
-        # Add user message to session
-        user_message = ClaudeMessage(
-            id=str(uuid.uuid4()),
-            content=request.query,
-            role=MessageRole.USER,
-            timestamp=datetime.utcnow(),
-            session_id=request.session_id,
-        )
-        self.session_manager.add_message(request.session_id, user_message)
-
-        # Start streaming response
-        message_id = str(uuid.uuid4())
-        sdk_kwargs = self._prepare_sdk_kwargs(options)
-        full_response = ""
-        client = None
-
         try:
-            print(f"🚀 Starting Claude streaming for session: {request.session_id}")
-            print(f"🚀 Query: {request.query[:50]}...")
-            print(f"🚀 SDK kwargs: {sdk_kwargs}")
-
-            # Create client manually to avoid context manager exit issues
-            from claude_code_sdk import ClaudeSDKClient
-            client = ClaudeSDKClient(**sdk_kwargs)
-
-            print(f"🚀 Claude client created successfully")
-            # Connect to Claude Code SDK before using
-            await client.connect()
-            print(f"🚀 Claude client connected successfully")
-
-            # Claude Code SDK streams automatically through receive_response()
-            await client.query(request.query)
-            print(f"🚀 Query sent to Claude, waiting for streaming response...")
-
-            message_count = 0
-            async for message in client.receive_response():
-                message_count += 1
-                print(f"🚀 Received message #{message_count}")
-                print(f"🔍 Claude SDK message type: {type(message)}")
-
-                # Extract content from ALL message types and determine chunk type
-                chunk_content = None
-                chunk_type = "delta"
-
-                # Determine message type for UI indicators
-                message_type_name = type(message).__name__.replace('Message', '')
-
-                if hasattr(message, "content") and message.content:
-                    print(f"🔍 Content blocks: {len(message.content)}")
-                    for i, block in enumerate(message.content):
-                        block_type = type(block).__name__
-                        print(f"🔍 Block {i} type: {block_type}")
-
-                        # Handle different block types
-                        if hasattr(block, "text") and block.text.strip():
-                            # TextBlock
-                            chunk_content = block.text
-                            full_response += chunk_content
-                        elif hasattr(block, "name") and hasattr(block, "input"):
-                            # ToolUseBlock
-                            tool_name = block.name
-                            tool_input = getattr(block, "input", {})
-                            print(f"🔧 ToolUseBlock - name: {tool_name}, input: {tool_input}")
-                            chunk_content = f"Using tool: {tool_name}"
-                            if isinstance(tool_input, dict) and tool_input:
-                                # Extract meaningful info from tool input
-                                if "path" in tool_input:
-                                    chunk_content += f" on {tool_input['path']}"
-                                elif "pattern" in tool_input:
-                                    chunk_content += f" searching for '{tool_input['pattern']}'"
-                                elif "file_path" in tool_input:
-                                    chunk_content += f" on {tool_input['file_path']}"
-                                elif "command" in tool_input:
-                                    cmd = tool_input['command']
-                                    if len(cmd) > 50:
-                                        chunk_content += f" command: {cmd[:50]}..."
-                                    else:
-                                        chunk_content += f" command: {cmd}"
-                        elif hasattr(block, "content") and hasattr(block, "tool_use_id"):
-                            # ToolResultBlock
-                            tool_content = getattr(block, "content", "")
-                            tool_use_id = getattr(block, "tool_use_id", "")
-                            print(f"🛠️ ToolResultBlock - tool_use_id: {tool_use_id}, content type: {type(tool_content)}, content: {str(tool_content)[:100]}")
-                            if isinstance(tool_content, str) and tool_content.strip():
-                                # Truncate long tool results for UI
-                                if len(tool_content) > 150:
-                                    chunk_content = f"Tool result: {tool_content[:150]}..."
-                                else:
-                                    chunk_content = f"Tool result: {tool_content}"
-                            elif isinstance(tool_content, (list, dict)):
-                                # Handle structured tool results
-                                chunk_content = f"Tool result: {str(tool_content)[:150]}..."
-
-                        if chunk_content:
-                            # Add message type prefix for visual distinction
-                            if message_type_name == "Assistant":
-                                if "tool" in chunk_content.lower():
-                                    prefixed_content = f"🔧 {chunk_content}"
-                                    chunk_type = "tool"
-                                else:
-                                    prefixed_content = f"🤖 {chunk_content}"
-                                    chunk_type = "thinking" if "thinking" in chunk_content.lower() else "assistant"
-                            elif message_type_name == "User":
-                                prefixed_content = f"🛠️ {chunk_content}"
-                                chunk_type = "tool"
-                            else:
-                                prefixed_content = f"📋 {chunk_content}"
-                                chunk_type = "system"
-
-                            print(f"🔍 Yielding {message_type_name} chunk: '{chunk_content[:50]}...'")
-
-                            # Yield individual thinking step
-                            yield StreamingChunk(
-                                content=prefixed_content,
-                                chunk_type=chunk_type,
-                                message_id=f"{message_id}-{message_count}",
-                                timestamp=datetime.utcnow(),
-                            )
-                            break  # Take first meaningful block
-
-                # Check for other content patterns in different message types
-                elif hasattr(message, "data") and message.data:
-                    print(f"🔍 Message has data: {type(message.data)}")
-                    if isinstance(message.data, str) and message.data.strip():
-                        chunk_content = f"📊 {message.data}"
-                        print(f"🔍 Yielding data chunk: '{message.data[:50]}...'")
-
-                        yield StreamingChunk(
-                            content=chunk_content,
-                            chunk_type="system",
-                            message_id=f"{message_id}-{message_count}",
-                            timestamp=datetime.utcnow(),
-                        )
-
-                elif hasattr(message, "subtype"):
-                    print(f"🔍 Message subtype: {message.subtype}")
-                    # Log subtype for debugging but don't yield empty content
-
-            # Add complete assistant message to session
-            assistant_message = ClaudeMessage(
-                id=message_id,
-                content=full_response,
-                role=MessageRole.ASSISTANT,
-                timestamp=datetime.utcnow(),
+            # Yield start chunk
+            yield StreamingChunk(
+                chunk_type=ChunkType.START,
+                content=None,
+                message_id=str(uuid.uuid4()),
                 session_id=request.session_id,
             )
-            self.session_manager.add_message(request.session_id, assistant_message)
 
-            # Send completion chunk
+            # Get Claude session ID if available for resumption
+            claude_session_id = self.session_manager.get_claude_session_id(request.session_id)
+
+            # Create proper SDK options object
+            sdk_options = ClaudeCodeOptions(
+                model=options.model,  # Use default model if None
+                resume=claude_session_id,  # This enables session resumption
+                permission_mode="bypassPermissions",  # Allow all tools for mobile use
+            )
+
+            # Send query to Claude SDK
+            response = query(
+                prompt=request.query,
+                options=sdk_options
+            )
+
+            # Stream response chunks
+            accumulated_content = ""
+            new_claude_session_id = None
+
+            async for message in response:
+                # Extract session ID from SystemMessage with init subtype
+                if hasattr(message, 'subtype') and message.subtype == 'init':
+                    if hasattr(message, 'data') and 'session_id' in message.data:
+                        new_claude_session_id = message.data['session_id']
+
+                # Extract and yield text content
+                if hasattr(message, "content"):
+                    for block in message.content:
+                        if hasattr(block, "text"):
+                            chunk_text = block.text
+                            accumulated_content += chunk_text
+
+                            yield StreamingChunk(
+                                chunk_type=ChunkType.DELTA,
+                                content=chunk_text,
+                                message_id=str(uuid.uuid4()),
+                                session_id=request.session_id,
+                            )
+
+            # Store Claude session ID for future resumption
+            if new_claude_session_id:
+                self.session_manager.set_claude_session_id(request.session_id, new_claude_session_id)
+
+            # Increment message count (user + assistant)
+            self.session_manager.increment_message_count(request.session_id)
+            self.session_manager.increment_message_count(request.session_id)
+
+            # Yield completion chunk
             yield StreamingChunk(
-                content="",
-                chunk_type="complete",
-                message_id=message_id,
-                timestamp=datetime.utcnow(),
+                chunk_type=ChunkType.COMPLETE,
+                content=None,
+                message_id=str(uuid.uuid4()),
+                session_id=request.session_id,
             )
 
         except Exception as e:
-            print(f"❌ Claude streaming error: {type(e).__name__}: {str(e)}")
-            import traceback
-            print(f"❌ Full traceback: {traceback.format_exc()}")
+            # Yield error chunk
+            yield StreamingChunk(
+                chunk_type=ChunkType.ERROR,
+                content=None,
+                error=str(e),
+                message_id=str(uuid.uuid4()),
+                session_id=request.session_id,
+            )
 
             self.session_manager.update_session_status(
                 request.session_id, SessionStatus.ERROR
             )
+            raise e
 
-            # Send error chunk
-            yield StreamingChunk(
-                content=f"Error: {str(e)}",
-                chunk_type="error",
-                message_id=message_id,
-                timestamp=datetime.utcnow(),
+    async def get_sessions(self, user_id: str) -> List[SessionResponse]:
+        """Get all sessions for a user."""
+        sessions_data = self.session_manager.get_user_sessions(user_id)
+
+        return [
+            SessionResponse(
+                session_id=session["session_id"],
+                user_id=session["user_id"],
+                session_name=session["session_name"],
+                status=session["status"],
+                messages=[],  # Messages are handled by Claude SDK
+                created_at=session["created_at"],
+                updated_at=session["updated_at"],
+                message_count=session["message_count"],
+                context=session["context"],
             )
-        finally:
-            # Properly close client if it exists
-            if client:
-                try:
-                    await client.disconnect()
-                except Exception as e:
-                    print(f"⚠️ Error disconnecting Claude client: {e}")
+            for session in sessions_data
+        ]
 
     async def get_session(
         self, session_id: str, user_id: str
     ) -> Optional[SessionResponse]:
-        """Get session details with messages."""
+        """Get session details."""
         session_data = self.session_manager.get_session(session_id)
         if not session_data or session_data["user_id"] != user_id:
             return None
-
-        messages = [ClaudeMessage(**msg_data) for msg_data in session_data["messages"]]
 
         return SessionResponse(
             session_id=session_data["session_id"],
             user_id=session_data["user_id"],
             session_name=session_data["session_name"],
             status=session_data["status"],
-            messages=messages,
+            messages=[],  # Messages are handled by Claude SDK
             created_at=session_data["created_at"],
             updated_at=session_data["updated_at"],
-            message_count=len(messages),
+            message_count=session_data["message_count"],
             context=session_data["context"],
         )
 
@@ -430,26 +345,26 @@ class ClaudeService:
         self, user_id: str, limit: int = 10, offset: int = 0
     ) -> List[SessionResponse]:
         """List sessions for a user with pagination."""
-        sessions_data = self.session_manager.get_user_sessions(user_id, limit, offset)
+        sessions_data = self.session_manager.get_user_sessions(user_id)
 
-        sessions = []
-        for session_data in sessions_data:
-            messages = [
-                ClaudeMessage(**msg_data) for msg_data in session_data["messages"]
-            ]
+        # Apply pagination
+        paginated_sessions = sessions_data[offset:offset + limit]
 
-            sessions.append(
-                SessionResponse(
-                    session_id=session_data["session_id"],
-                    user_id=session_data["user_id"],
-                    session_name=session_data["session_name"],
-                    status=session_data["status"],
-                    messages=messages,
-                    created_at=session_data["created_at"],
-                    updated_at=session_data["updated_at"],
-                    message_count=len(messages),
-                    context=session_data["context"],
-                )
+        return [
+            SessionResponse(
+                session_id=session["session_id"],
+                user_id=session["user_id"],
+                session_name=session["session_name"],
+                status=session["status"],
+                messages=[],  # Messages are handled by Claude SDK
+                created_at=session["created_at"],
+                updated_at=session["updated_at"],
+                message_count=session["message_count"],
+                context=session["context"],
             )
+            for session in paginated_sessions
+        ]
 
-        return sessions
+
+# Global service instance
+claude_service = ClaudeService()

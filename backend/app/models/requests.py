@@ -13,7 +13,7 @@ class ClaudeCodeOptions(BaseModel):
 
     api_key: Optional[str] = Field(None, description="Claude API key")
     model: Optional[str] = Field(
-        "claude-3-5-sonnet-20241022", description="Claude model to use"
+        None, description="Claude model to use (defaults to latest)"
     )
     max_tokens: Optional[int] = Field(8192, description="Maximum tokens in response")
     temperature: Optional[float] = Field(0.7, description="Response creativity level")
@@ -24,8 +24,8 @@ class SessionRequest(BaseModel):
     """Request to create a new Claude Code session."""
 
     user_id: str = Field(..., description="Unique user identifier")
-    claude_options: ClaudeCodeOptions = Field(
-        ..., description="Claude SDK configuration"
+    claude_options: Optional[ClaudeCodeOptions] = Field(
+        default_factory=ClaudeCodeOptions, description="Claude SDK configuration"
     )
     session_name: Optional[str] = Field(None, description="Optional session name")
     context: Optional[Dict[str, Any]] = Field(

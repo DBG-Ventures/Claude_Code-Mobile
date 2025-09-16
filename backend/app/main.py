@@ -16,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api import claude
 from app.models.responses import ErrorResponse, HealthResponse
+from app.services.claude_service import claude_service
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Claude Code Mobile Backend starting up...")
     print(f"⏰ Startup time: {datetime.utcnow().isoformat()}")
+    print("✅ Claude service initialized with persistent session management")
 
     yield
 
