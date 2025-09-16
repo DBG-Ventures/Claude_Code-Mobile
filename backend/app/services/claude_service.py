@@ -74,8 +74,15 @@ class ClaudeService:
             raise ValueError(f"Working directory does not exist: {working_dir}")
 
         try:
-            # Create Claude SDK session with working directory as project root
+            # Create Claude SDK session with specified working directory
             # Claude SDK will automatically create sessions in ~/.claude/projects/[working_dir_hash]
+            self.logger.info(
+                f"Creating Claude SDK session with working directory: {working_dir}",
+                category="session_management",
+                operation="create_session",
+                working_directory=working_dir
+            )
+
             response = query(
                 prompt="Session initialized",
                 options=ClaudeCodeOptions(
@@ -133,39 +140,39 @@ class ClaudeService:
     async def _extract_session_id(self, response) -> str:
         """Extract Claude SDK session ID from response.
 
-        Note: This may cause async cleanup warnings in Claude SDK,
-        but these are expected and don't affect functionality.
+        The session ID is available in the first SystemMessage with subtype 'init'
+        in the data field as 'session_id'.
         """
         try:
-            # Consume just enough of the response to potentially get session metadata
             session_id = None
-            message_count = 0
 
             async for message in response:
-                message_count += 1
-
-                # Check for session metadata in the message
-                if hasattr(message, 'metadata') and message.metadata:
-                    extracted_id = message.metadata.get('session_id')
-                    if extracted_id:
-                        session_id = extracted_id
-                        break
-
-                # Only process first few messages to minimize async issues
-                if message_count >= 2:
+                # Check for SystemMessage with init subtype containing session ID
+                if (hasattr(message, 'data') and
+                    hasattr(message, 'subtype') and
+                    message.subtype == 'init' and
+                    'session_id' in message.data):
+                    session_id = message.data['session_id']
+                    self.logger.info(
+                        f"Extracted Claude SDK session ID: {session_id}",
+                        category="session_management",
+                        operation="extract_session_id"
+                    )
                     break
 
-            # Return extracted ID or generate a fallback
-            return session_id or str(uuid.uuid4())
+            if not session_id:
+                raise RuntimeError("Failed to extract session ID from Claude SDK response - no init message found")
+
+            return session_id
 
         except Exception as e:
-            # Generate fallback session ID if extraction fails
-            self.logger.debug(
-                f"Session ID extraction failed, using generated ID: {e}",
+            self.logger.error(
+                f"Session ID extraction failed: {e}",
                 category="session_management",
-                operation="extract_session_id"
+                operation="extract_session_id",
+                error=str(e)
             )
-            return str(uuid.uuid4())
+            raise RuntimeError(f"Failed to extract session ID: {e}")
 
     async def query(
         self, request: ClaudeQueryRequest, options: RequestOptions
@@ -176,12 +183,24 @@ class ClaudeService:
             start_time = datetime.utcnow()
 
             # Get working directory from session context (stored during creation)
-            # For simplicity, we'll let Claude SDK handle session resumption
-            # The working directory context is preserved in Claude SDK sessions
+            session_data = self.active_sessions.get(request.session_id)
+            if not session_data:
+                raise ValueError(f"Session {request.session_id} not found")
 
-            # Create proper SDK options with session resumption
+            working_dir = session_data["working_directory"]
+
+            self.logger.info(
+                f"Querying Claude SDK with session resumption",
+                category="query_execution",
+                session_id=request.session_id,
+                user_id=request.user_id,
+                working_directory=working_dir,
+                operation="query"
+            )
+
+            # Create proper SDK options with session resumption and working directory
             sdk_options = ClaudeCodeOptions(
-                # Note: We don't set cwd here as it's preserved in the resumed session
+                cwd=working_dir,  # CRITICAL: Must specify working directory for session resumption
                 model=options.model,
                 resume=request.session_id,  # Claude SDK session resumption
                 permission_mode="bypassPermissions",
@@ -232,6 +251,22 @@ class ClaudeService:
         """Stream Claude's response using session resumption."""
 
         try:
+            # Get working directory from session context (stored during creation)
+            session_data = self.active_sessions.get(request.session_id)
+            if not session_data:
+                raise ValueError(f"Session {request.session_id} not found")
+
+            working_dir = session_data["working_directory"]
+
+            self.logger.info(
+                f"Starting streaming response with session resumption",
+                category="query_execution",
+                session_id=request.session_id,
+                user_id=request.user_id,
+                working_directory=working_dir,
+                operation="stream_response"
+            )
+
             # Yield start chunk
             yield StreamingChunk(
                 chunk_type=ChunkType.START,
@@ -240,9 +275,9 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
-            # Create proper SDK options with session resumption
+            # Create proper SDK options with session resumption and working directory
             sdk_options = ClaudeCodeOptions(
-                # Working directory context is preserved in the resumed session
+                cwd=working_dir,  # CRITICAL: Must specify working directory for session resumption
                 model=options.model,
                 resume=request.session_id,  # Claude SDK session resumption
                 permission_mode="bypassPermissions",
