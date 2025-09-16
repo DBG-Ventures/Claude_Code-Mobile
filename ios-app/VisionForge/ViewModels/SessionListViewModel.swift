@@ -90,12 +90,12 @@ class SessionListViewModel: ObservableObject {
         }
     }
     
-    func createNewSession(name: String, completion: @escaping (Bool) -> Void) {
+    func createNewSession(name: String, workingDirectory: String? = nil, completion: @escaping (Bool) -> Void) {
         guard let claudeService = claudeService else {
             completion(false)
             return
         }
-        
+
         Task {
             do {
                 let sessionRequest = SessionRequest(
@@ -108,6 +108,7 @@ class SessionListViewModel: ObservableObject {
                         timeout: 60
                     ),
                     sessionName: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    workingDirectory: workingDirectory, // User-specified working directory
                     context: ["created_from": .string("mobile"), "platform": .string("iOS")]
                 )
                 

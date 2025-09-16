@@ -378,21 +378,87 @@ struct NewSessionSheet: View {
     @ObservedObject var sessionViewModel: SessionListViewModel
     @EnvironmentObject var networkManager: NetworkManager
     @Environment(\.presentationMode) var presentationMode
-    
+
     @State private var sessionName: String = ""
+    @State private var workingDirectory: String = ""
+    @State private var useCustomWorkingDir: Bool = false
     @State private var isCreating: Bool = false
-    
+
+    // Common working directory presets
+    private let workingDirPresets = [
+        ("Project Root (Default)", ""),
+        ("Desktop", "~/Desktop"),
+        ("Documents", "~/Documents"),
+        ("Downloads", "~/Downloads"),
+        ("Development", "~/Development"),
+        ("Custom Path", "custom")
+    ]
+    @State private var selectedPreset = 0
+
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
+                // Session Name Section
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Session Name")
                         .font(.headline)
-                    
+
                     TextField("Enter session name...", text: $sessionName)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
-                
+
+                // Working Directory Section
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Working Directory")
+                        .font(.headline)
+
+                    Text("Specify the working directory for Claude SDK session storage. This affects where session files are stored and project context.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    // Working Directory Options
+                    VStack(spacing: 12) {
+                        Picker("Working Directory", selection: $selectedPreset) {
+                            ForEach(0..<workingDirPresets.count, id: \.self) { index in
+                                Text(workingDirPresets[index].0).tag(index)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(.secondarySystemGroupedBackground))
+                        )
+
+                        // Custom path input (shown when "Custom Path" is selected)
+                        if selectedPreset == workingDirPresets.count - 1 {
+                            TextField("Enter custom working directory path...", text: $workingDirectory)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                        }
+
+                        // Working directory preview
+                        if !effectiveWorkingDirectory.isEmpty {
+                            HStack {
+                                Image(systemName: "folder")
+                                    .foregroundColor(.blue)
+                                Text("Path: \(effectiveWorkingDirectory)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(.tertiarySystemGroupedBackground))
+                            )
+                        }
+                    }
+                }
+
                 Spacer()
             }
             .padding()
@@ -404,7 +470,7 @@ struct NewSessionSheet: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Create") {
                         createSession()
@@ -414,11 +480,21 @@ struct NewSessionSheet: View {
             }
         }
     }
+
+    private var effectiveWorkingDirectory: String {
+        if selectedPreset == workingDirPresets.count - 1 {
+            return workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            return workingDirPresets[selectedPreset].1
+        }
+    }
     
     private func createSession() {
         isCreating = true
-        
-        sessionViewModel.createNewSession(name: sessionName) { success in
+
+        let workingDir = effectiveWorkingDirectory.isEmpty ? nil : effectiveWorkingDirectory
+
+        sessionViewModel.createNewSession(name: sessionName, workingDirectory: workingDir) { success in
             isCreating = false
             if success {
                 presentationMode.wrappedValue.dismiss()

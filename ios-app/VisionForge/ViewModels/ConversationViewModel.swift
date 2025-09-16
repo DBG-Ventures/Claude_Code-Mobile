@@ -140,6 +140,7 @@ class ConversationViewModel: ObservableObject {
                     userId: userId,
                     claudeOptions: claudeOptions,
                     sessionName: "Mobile Chat Session",
+                    workingDirectory: nil, // Use backend default project root
                     context: [:]
                 )
                 
@@ -185,6 +186,7 @@ class ConversationViewModel: ObservableObject {
                     query: query,
                     userId: userId,
                     stream: true,
+                    options: claudeOptions,
                     context: [:]
                 )
 

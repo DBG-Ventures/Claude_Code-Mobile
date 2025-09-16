@@ -138,19 +138,22 @@ struct SessionRequest: Codable {
     let userId: String
     let claudeOptions: ClaudeCodeOptions
     let sessionName: String?
+    let workingDirectory: String?
     let context: [String: AnyCodable]
 
     enum CodingKeys: String, CodingKey {
         case userId = "user_id"
         case claudeOptions = "claude_options"
         case sessionName = "session_name"
+        case workingDirectory = "working_directory"
         case context
     }
 
-    init(userId: String, claudeOptions: ClaudeCodeOptions, sessionName: String? = nil, context: [String: AnyCodable] = [:]) {
+    init(userId: String, claudeOptions: ClaudeCodeOptions, sessionName: String? = nil, workingDirectory: String? = nil, context: [String: AnyCodable] = [:]) {
         self.userId = userId
         self.claudeOptions = claudeOptions
         self.sessionName = sessionName
+        self.workingDirectory = workingDirectory
         self.context = context
     }
 }
@@ -162,6 +165,7 @@ struct ClaudeQueryRequest: Codable {
     let query: String
     let userId: String
     let stream: Bool
+    let options: ClaudeCodeOptions?
     let context: [String: AnyCodable]
 
     enum CodingKeys: String, CodingKey {
@@ -169,14 +173,16 @@ struct ClaudeQueryRequest: Codable {
         case query
         case userId = "user_id"
         case stream
+        case options
         case context
     }
 
-    init(sessionId: String, query: String, userId: String, stream: Bool = true, context: [String: AnyCodable] = [:]) {
+    init(sessionId: String, query: String, userId: String, stream: Bool = true, options: ClaudeCodeOptions? = nil, context: [String: AnyCodable] = [:]) {
         self.sessionId = sessionId
         self.query = query
         self.userId = userId
         self.stream = stream
+        self.options = options
         self.context = context
     }
 }
