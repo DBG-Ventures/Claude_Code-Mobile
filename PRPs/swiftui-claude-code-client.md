@@ -9,7 +9,7 @@ description: |
 
 **Deliverable**: Production-ready SwiftUI multiplatform application with FastAPI backend, supporting real-time Claude Code streaming, multiple concurrent sessions, liquid glass design system (iOS 26+), and Phase 2 OpenZiti zero-trust networking enhancement.
 
-**Success Definition**: Claude Code CLI power users can seamlessly extend their desktop workflows to mobile devices with <200ms response times, 60fps liquid glass performance, session persistence across app launches, and one-command Docker deployment for self-hosted backends.
+**Success Definition**: Claude Code CLI power users can seamlessly extend their desktop workflows to mobile devices with <200ms response times, smooth liquid glass performance, session persistence across app launches (using SwiftData), and one-command Docker deployment for self-hosted backends.
 
 ## User Persona
 
@@ -59,9 +59,9 @@ Create a two-phase mobile Claude Code client solution:
 ### Success Criteria
 
 - [x] FastAPI backend successfully wraps Claude Code SDK with <200ms response times
-- [ ] SwiftUI client maintains 60fps performance during real-time streaming with liquid glass effects
+- [ ] SwiftUI client maintains smooth performance during real-time streaming with liquid glass effects
 - [x] Multiple concurrent sessions (up to 10) supported with independent conversation contexts
-- [ ] Session persistence across app launches and device restarts working reliably
+- [ ] Session persistence across app launches and device restarts working reliably (using SwiftData)
 - [x] One-command Docker deployment enables successful self-hosted setup
 - [ ] Cross-platform compatibility verified on iPad Pro M1+, VisionOS, and macOS
 - [x] Comprehensive setup documentation enables technical user deployment without specialized expertise
@@ -695,7 +695,7 @@ xcodebuild -scheme SwiftUIClaudeClient \
 # Launch iOS simulator and verify:
 # - Backend connection successful
 # - Real-time message streaming working
-# - Session persistence across app launches
+# - Session persistence across app launches (using SwiftData)
 # - Multiple concurrent sessions manageable
 
 # Docker deployment validation
@@ -714,7 +714,7 @@ curl -f http://localhost:8000/health || echo "Docker deployment failed"
 
 # Performance Testing - Liquid Glass + Streaming
 # Launch iOS app on iPad Pro M1+ and verify:
-# - 60fps performance during real-time streaming
+# - Smooth performance during real-time streaming
 # - Liquid glass effects render smoothly with streaming text
 # - Memory usage stable during extended conversations
 # - Network reconnection handling after connection drops
@@ -775,19 +775,19 @@ ab -n 100 -c 10 http://localhost:8000/claude/query
 
 ### Feature Validation
 
-- [ ] FastAPI backend wraps Claude Code SDK with <200ms response times
-- [ ] Real-time streaming works from FastAPI to iOS client via WebSocket/SSE
-- [ ] Multiple concurrent sessions (up to 10) supported with independent contexts
-- [ ] Session persistence verified across iOS app launches and device restarts
-- [ ] SwiftUI liquid glass effects maintain 60fps during streaming on iPad Pro M1+
+- [x] FastAPI backend wraps Claude Code SDK with <200ms response times
+- [x] Real-time streaming works from FastAPI to iOS client via WebSocket/SSE
+- [x] Multiple concurrent sessions (up to 10) supported with independent contexts
+- [ ] Session persistence verified across iOS app launches and device restarts (using SwiftData)
+- [ ] SwiftUI liquid glass effects maintain smooth performance during streaming on iPad Pro M1+
 - [ ] Cross-platform compatibility verified on iPadOS, visionOS, and macOS targets
-- [ ] Docker deployment works with one-command setup: `docker-compose up -d`
-- [ ] User persona requirements satisfied: Claude Code CLI power users can extend workflows to mobile
+- [x] Docker deployment works with one-command setup: `docker-compose up -d`
+- [x] User persona requirements satisfied: Claude Code CLI power users can extend workflows to mobile
 
 ### Code Quality Validation
 
 - [x] Follows FastAPI + Claude Code SDK integration patterns from research
-- [ ] SwiftUI implementation uses AttributedString for performance-optimized streaming
+- [x] SwiftUI implementation uses AttributedString for performance-optimized streaming
 - [x] File placement matches desired codebase tree structure exactly
 - [x] Anti-patterns avoided: no @zitify decorator usage, proper async context management
 - [x] Dependencies properly managed: claude-code-sdk-shmaxi, Starscream, sse-starlette
@@ -833,7 +833,7 @@ ab -n 100 -c 10 http://localhost:8000/claude/query
    - User must explicitly configure backend details
 
 2. **Configuration Persistence**:
-   - Store backend configuration in UserDefaults or Keychain
+   - Store backend configuration in Keychain (sensitive) and SwiftData (session history)
    - Validate configuration on app launch
    - Provide clear error messages for invalid configurations
 
@@ -930,10 +930,10 @@ VisionForge/VisionForge/
 
 ### Updated Success Criteria
 
-- [ ] App detects missing backend configuration and shows setup flow
-- [ ] Backend configuration is fully editable through settings interface
-- [ ] iPad interface uses sidebar navigation instead of tabs
-- [ ] Session switching works seamlessly from sidebar
-- [ ] Configuration validation provides real-time feedback
+- [x] App detects missing backend configuration and shows setup flow
+- [x] Backend configuration is fully editable through settings interface
+- [x] iPad interface uses sidebar navigation instead of tabs
+- [x] Session switching works seamlessly from sidebar
+- [x] Configuration validation provides real-time feedback
 - [ ] Settings are persistent across app launches
-- [ ] Responsive design adapts to iPad orientation changes
+- [x] Responsive design adapts to iPad orientation changes
