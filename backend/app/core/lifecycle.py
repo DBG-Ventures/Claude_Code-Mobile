@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI
+from app.utils.logging import setup_logging, StructuredLogger
 
 
 @asynccontextmanager
@@ -28,28 +29,54 @@ async def lifespan(app: FastAPI):
         Application context during runtime
     """
     # Startup
-    print("🚀 Claude Code Mobile Backend starting up...")
-    print(f"⏰ Startup time: {datetime.utcnow().isoformat()}")
+    # Initialize logging system first
+    setup_logging()
+    logger = StructuredLogger(__name__)
+
+    logger.info(
+        "Claude Code Mobile Backend starting up",
+        category="lifecycle",
+        operation="startup",
+        timestamp=datetime.utcnow().isoformat()
+    )
 
     # CRITICAL: Set consistent working directory BEFORE any Claude SDK operations
-    project_root = Path(__file__).parent.parent.parent.absolute()
+    # Use environment variable if set, otherwise use parent project directory
+    claude_project_root = os.environ.get("CLAUDE_PROJECT_ROOT")
+    if claude_project_root:
+        project_root = Path(claude_project_root)
+    else:
+        # Go to parent directory so Claude SDK uses Claude_Code-Mobile, not backend
+        backend_root = Path(__file__).parent.parent.parent.absolute()
+        project_root = backend_root.parent
+
     os.chdir(project_root)
 
-    # Verify Claude session storage location
-    claude_sessions_path = (
-        Path.home() / ".claude" / "projects" / f"-{str(project_root).replace('/', '-')}"
-    )
+    # Verify Claude session storage location using environment variables
+    project_hash = str(project_root.absolute()).replace("/", "-")
+    if not project_hash.startswith("-"):
+        project_hash = f"-{project_hash}"
+
+    claude_home = os.environ.get("CLAUDE_HOME", str(Path.home() / ".claude"))
+    claude_sessions_path = Path(claude_home) / "projects" / project_hash
 
     # Store in app state for service access
     app.state.project_root = project_root
     app.state.claude_sessions_path = claude_sessions_path
 
-    print(f"✅ Working directory set to: {project_root}")
-    print(f"✅ Claude sessions stored at: {claude_sessions_path}")
-    print("✅ Claude service ready for direct SDK session usage")
+    # Initialize shared session registry for persistence across requests
+    app.state.session_registry = {}
+
+    logger.info(
+        "Working directory and session storage configured",
+        category="lifecycle",
+        operation="configure_directories",
+        project_root=str(project_root),
+        claude_sessions_path=str(claude_sessions_path)
+    )
 
     # Create Claude config directory if it doesn't exist
-    claude_dir = Path.home() / ".claude"
+    claude_dir = Path(claude_home)
     if not claude_dir.exists():
         claude_dir.mkdir(parents=True, exist_ok=True)
         print(f"✅ Created Claude config directory: {claude_dir}")
@@ -69,8 +96,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    print("🛑 Claude Code Mobile Backend shutting down...")
-    print(f"⏰ Shutdown time: {datetime.utcnow().isoformat()}")
+    logger.info(
+        "Claude Code Mobile Backend shutting down",
+        category="lifecycle",
+        operation="shutdown",
+        timestamp=datetime.utcnow().isoformat()
+    )
 
 
 def initialize_claude_environment() -> Path:
@@ -83,7 +114,14 @@ def initialize_claude_environment() -> Path:
     Raises:
         RuntimeError: If working directory cannot be set correctly
     """
-    project_root = Path(__file__).parent.parent.parent.absolute()
+    # Use environment variable if set, otherwise use parent project directory
+    claude_project_root = os.environ.get("CLAUDE_PROJECT_ROOT")
+    if claude_project_root:
+        project_root = Path(claude_project_root)
+    else:
+        # Go to parent directory so Claude SDK uses Claude_Code-Mobile, not backend
+        backend_root = Path(__file__).parent.parent.parent.absolute()
+        project_root = backend_root.parent
 
     try:
         os.chdir(project_root)
@@ -110,9 +148,14 @@ def verify_session_storage(project_root: Path) -> dict:
     Returns:
         dict: Session storage verification results
     """
-    claude_dir = Path.home() / ".claude"
+    claude_home = os.environ.get("CLAUDE_HOME", str(Path.home() / ".claude"))
+    claude_dir = Path(claude_home)
     projects_dir = claude_dir / "projects"
-    project_hash = f"-{str(project_root).replace('/', '-')}"
+
+    project_hash = str(project_root.absolute()).replace("/", "-")
+    if not project_hash.startswith("-"):
+        project_hash = f"-{project_hash}"
+
     project_sessions_dir = projects_dir / project_hash
 
     verification_result = {

@@ -33,9 +33,10 @@ router = APIRouter(prefix="/claude", tags=["claude"])
 
 
 def get_claude_service(request: Request) -> ClaudeService:
-    """Dependency to provide Claude service with consistent project root."""
+    """Dependency to provide Claude service with shared session registry."""
     project_root = request.app.state.project_root
-    return ClaudeService(project_root)
+    session_registry = request.app.state.session_registry
+    return ClaudeService(project_root, session_registry)
 
 
 @router.get("/health", response_model=HealthResponse)

@@ -14,8 +14,20 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Mock claude_code_sdk before importing app modules
-sys.modules['claude_code_sdk'] = MagicMock()
-sys.modules['claude_code_sdk.types'] = MagicMock()
+claude_sdk_mock = MagicMock()
+claude_types_mock = MagicMock()
+
+# Mock ClaudeCodeOptions class to return proper objects
+class MockClaudeCodeOptions:
+    def __init__(self, cwd=None, model=None, resume=None, permission_mode=None, **kwargs):
+        self.cwd = cwd
+        self.model = model
+        self.resume = resume
+        self.permission_mode = permission_mode
+
+claude_types_mock.ClaudeCodeOptions = MockClaudeCodeOptions
+sys.modules['claude_code_sdk'] = claude_sdk_mock
+sys.modules['claude_code_sdk.types'] = claude_types_mock
 
 from app.main import app
 from app.services.claude_service import ClaudeService
@@ -66,19 +78,26 @@ def mock_claude_response():
                 self._messages_sent = 0
 
             if self._messages_sent == 0:
-                # Mock initialization message with session ID
-                init_message = MagicMock()
-                init_message.subtype = 'init'
-                init_message.data = {'session_id': 'test-session-123'}
+                # Mock initialization message with session ID - use real objects, not MagicMock
+                class MockInitMessage:
+                    def __init__(self):
+                        self.subtype = 'init'
+                        self.data = {'session_id': 'test-session-123'}  # Real dict with string value
+
                 self._messages_sent += 1
-                return init_message
+                return MockInitMessage()
             elif self._messages_sent == 1:
-                # Mock content message
-                content_message = MagicMock()
-                content_message.content = [MagicMock()]
-                content_message.content[0].text = "Test response from Claude"
+                # Mock content message - use real objects for content
+                class MockContentMessage:
+                    def __init__(self):
+                        self.content = [MockContentItem()]
+
+                class MockContentItem:
+                    def __init__(self):
+                        self.text = "Test response from Claude"
+
                 self._messages_sent += 1
-                return content_message
+                return MockContentMessage()
             else:
                 raise StopAsyncIteration
 
