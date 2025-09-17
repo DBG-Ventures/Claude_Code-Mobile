@@ -87,19 +87,27 @@ class ClaudeService:
                 user_id=request.user_id,
             )
 
-            # Generate unique session ID for new session
-            session_id = str(uuid.uuid4())
+            # Generate a temporary session ID - will be replaced by Claude SDK's ID
+            temp_session_id = str(uuid.uuid4())
 
-            # Create persistent client through SessionManager (no wasteful initialization)
+            # Create persistent client through SessionManager
+            # The SessionManager will return the Claude SDK's actual session ID
             client = await self.session_manager.get_or_create_session(
-                session_id=session_id,
+                session_id=temp_session_id,
                 working_dir=working_dir,
                 user_id=request.user_id,
                 is_new_session=True,
             )
 
-            # Get actual session ID from client (may be different from generated one)
-            actual_session_id = getattr(client, "session_id", session_id)
+            # Get the actual session ID that Claude SDK created
+            actual_session_id = temp_session_id
+            if hasattr(client, "session_id") and client.session_id:
+                actual_session_id = client.session_id
+            # Also check if SessionManager stored a different ID
+            elif temp_session_id in self.session_manager.active_sessions:
+                session_info = self.session_manager.active_sessions[temp_session_id]
+                if "claude_session_id" in session_info:
+                    actual_session_id = session_info["claude_session_id"]
 
             self.logger.info(
                 "SessionManager created persistent client",
@@ -182,13 +190,29 @@ class ClaudeService:
                 operation="query",
             )
 
-            # Get persistent client from SessionManager
-            client = await self.session_manager.get_or_create_session(
-                session_id=request.session_id,
-                working_dir=working_dir,
-                user_id=request.user_id,
-                is_new_session=False,
-            )
+            # Get persistent client from SessionManager with retry logic
+            max_retries = 2
+            client = None
+            for attempt in range(max_retries):
+                try:
+                    client = await self.session_manager.get_or_create_session(
+                        session_id=request.session_id,
+                        working_dir=working_dir,
+                        user_id=request.user_id,
+                        is_new_session=False,
+                    )
+                    break  # Success
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(
+                            f"Query attempt {attempt + 1} failed, retrying: {e}",
+                            category="query_execution",
+                            session_id=request.session_id,
+                            attempt=attempt + 1,
+                        )
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    else:
+                        raise
 
             # Send query to persistent client
             await client.query(request.query)
@@ -268,16 +292,41 @@ class ClaudeService:
                 session_id=request.session_id,
             )
 
-            # Get persistent client from SessionManager
-            client = await self.session_manager.get_or_create_session(
-                session_id=request.session_id,
-                working_dir=working_dir,
-                user_id=request.user_id,
-                is_new_session=False,
-            )
+            # Get persistent client from SessionManager with retry logic
+            max_retries = 2
+            client = None
+            for attempt in range(max_retries):
+                try:
+                    client = await self.session_manager.get_or_create_session(
+                        session_id=request.session_id,
+                        working_dir=working_dir,
+                        user_id=request.user_id,
+                        is_new_session=False,
+                    )
+                    break  # Success
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(
+                            f"Stream attempt {attempt + 1} failed, retrying: {e}",
+                            category="query_execution",
+                            session_id=request.session_id,
+                            attempt=attempt + 1,
+                        )
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    else:
+                        raise RuntimeError(f"Failed to get session after {max_retries} attempts: {e}")
 
-            # Send query to persistent client
-            await client.query(request.query)
+            # Send query to persistent client with error handling
+            try:
+                await client.query(request.query)
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to send query to Claude SDK: {e}",
+                    category="query_execution",
+                    session_id=request.session_id,
+                    error=str(e),
+                )
+                raise RuntimeError(f"Query failed: {e}")
 
             # Stream response chunks with mobile optimization
             async for message in client.receive_response():
@@ -474,3 +523,51 @@ class ClaudeService:
                 error=str(e),
             )
             return []
+
+    async def delete_session(self, session_id: str, user_id: str) -> bool:
+        """Delete a session from persistent storage and SessionManager."""
+        try:
+            # First verify the session exists and user has access
+            session = await self.get_session(session_id, user_id)
+            if not session:
+                self.logger.warning(
+                    "Session not found or access denied",
+                    category="session_management",
+                    session_id=session_id,
+                    user_id=user_id,
+                    operation="delete_session",
+                )
+                return False
+
+            # Remove from SessionManager if it exists there
+            if self.session_manager:
+                await self.session_manager.cleanup_session(session_id)
+                self.logger.info(
+                    "Removed session from SessionManager",
+                    category="session_management",
+                    session_id=session_id,
+                    operation="delete_from_session_manager",
+                )
+
+            # Remove from persistent storage
+            self.session_storage.remove_session(session_id)
+
+            self.logger.info(
+                "Session deleted successfully",
+                category="session_management",
+                session_id=session_id,
+                user_id=user_id,
+                operation="delete_session",
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to delete session: {e}",
+                category="session_management",
+                session_id=session_id,
+                user_id=user_id,
+                operation="delete_session",
+                error=str(e),
+            )
+            raise

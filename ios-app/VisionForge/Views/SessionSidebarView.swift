@@ -29,6 +29,8 @@ struct SessionSidebarView: View {
     @State private var showingSettings: Bool = false
     @State private var showingDeleteAlert: Bool = false
     @State private var sessionToDelete: SessionResponse?
+    @State private var showingDeleteError: Bool = false
+    @State private var deleteErrorMessage: String = ""
 
     // MARK: - Body
 
@@ -57,10 +59,15 @@ struct SessionSidebarView: View {
                 selectedSessionId = sessionId
             }
         }
+        .onReceive(sessionStateManager.$activeSessions) { _ in
+            // Force UI update when SessionManager sessions change
+            // The filteredSessions computed property will automatically recalculate
+        }
         .sheet(isPresented: $showingNewSessionSheet) {
             NewSessionSheet()
                 .environmentObject(networkManager)
                 .environmentObject(sessionViewModel)
+                .environmentObject(sessionStateManager)
         }
         .sheet(isPresented: $showingSettings) {
             EditableSettingsView()
@@ -70,12 +77,34 @@ struct SessionSidebarView: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 if let session = sessionToDelete {
-                    sessionViewModel.deleteSession(session)
-                    sessionToDelete = nil
+                    Task {
+                        do {
+                            try await sessionStateManager.deleteSession(session.sessionId)
+                            sessionToDelete = nil
+                            // If deleted session was selected, clear selection
+                            if selectedSessionId == session.sessionId {
+                                selectedSessionId = nil
+                            }
+                        } catch {
+                            // Show error to user instead of just printing
+                            await MainActor.run {
+                                deleteErrorMessage = "Failed to delete session. Please try again or check your connection."
+                                showingDeleteError = true
+                            }
+                            print("⚠️ Failed to delete session: \(error)")
+                        }
+                    }
                 }
             }
         } message: {
             Text("Are you sure you want to delete this session? This action cannot be undone.")
+        }
+        .alert("Delete Failed", isPresented: $showingDeleteError) {
+            Button("OK", role: .cancel) {
+                deleteErrorMessage = ""
+            }
+        } message: {
+            Text(deleteErrorMessage)
         }
     }
 
@@ -89,7 +118,7 @@ struct SessionSidebarView: View {
                         .font(.title2)
                         .fontWeight(.bold)
 
-                    Text("\(sessionViewModel.sessions.count) sessions")
+                    Text("\(filteredSessions.count) sessions")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -267,6 +296,7 @@ struct SessionSidebarView: View {
                             self.showingDeleteAlert = true
                         }
                     )
+                    .environmentObject(sessionStateManager)
                 }
             }
             .padding(.horizontal, 12)
@@ -378,24 +408,14 @@ struct SessionSidebarView: View {
     // MARK: - SessionManager Integration Methods
 
     private func combineSessionSources() -> [SessionResponse] {
-        // Combine SessionManager sessions with legacy sessions for comprehensive display
-        var combinedSessions: [SessionResponse] = []
-
-        // Add SessionManager sessions (converted to SessionResponse format)
+        // All sessions come from SessionManager backend now
+        // Convert SessionManager sessions to SessionResponse format for display
         let sessionManagerSessions = sessionStateManager.activeSessions.map { sessionManagerSession in
             convertToSessionResponse(sessionManagerSession)
         }
-        combinedSessions.append(contentsOf: sessionManagerSessions)
-
-        // Add legacy sessions (avoiding duplicates)
-        for legacySession in sessionViewModel.sessions {
-            if !combinedSessions.contains(where: { $0.sessionId == legacySession.sessionId }) {
-                combinedSessions.append(legacySession)
-            }
-        }
 
         // Sort by most recent activity
-        return combinedSessions.sorted { $0.updatedAt > $1.updatedAt }
+        return sessionManagerSessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: - Setup Methods
@@ -407,8 +427,8 @@ struct SessionSidebarView: View {
         // Setup SessionStateManager integration
         setupSessionManagerIntegration()
 
-        // Load sessions from both sources
-        loadAllSessions()
+        // Only load legacy sessions - SessionStateManager sessions are loaded by ContentView
+        sessionViewModel.loadSessions()
     }
 
     private func setupSessionManagerIntegration() {
@@ -422,14 +442,8 @@ struct SessionSidebarView: View {
         // Load from legacy source
         sessionViewModel.loadSessions()
 
-        // Load from SessionManager
-        Task {
-            do {
-                try await sessionStateManager.restoreSessionsFromPersistence()
-            } catch {
-                print("⚠️ Failed to restore sessions in sidebar: \(error)")
-            }
-        }
+        // SessionStateManager sessions are already loaded by ContentView
+        // No need to reload them here
     }
 
     private func refreshSessions() {
@@ -437,11 +451,8 @@ struct SessionSidebarView: View {
         sessionViewModel.loadSessions()
 
         Task {
-            do {
-                try await sessionStateManager.refreshSessionsFromBackend()
-            } catch {
-                print("⚠️ Failed to refresh sessions in sidebar: \(error)")
-            }
+            // Check connection and reload sessions from SessionManager
+            await sessionStateManager.checkSessionManagerConnectionStatus()
         }
     }
 
@@ -489,6 +500,7 @@ struct SidebarSessionRow: View {
     let isSelected: Bool
     let onSelect: (SessionResponse) -> Void
     let onDelete: (SessionResponse) -> Void
+    @EnvironmentObject var sessionStateManager: SessionStateManager
 
     var body: some View {
         HStack(spacing: 12) {
@@ -610,9 +622,8 @@ struct SidebarSessionRow: View {
 
     // SessionManager session detection and visual indicators
     private var isSessionManagerSession: Bool {
-        // Check if this session is from SessionManager (enhanced session features)
-        return session.sessionName?.contains("SessionManager") == true ||
-               session.sessionName?.contains("Mobile Session") == true
+        // All sessions are from SessionManager backend now
+        return true
     }
 
     private var rowBackgroundColor: Color {

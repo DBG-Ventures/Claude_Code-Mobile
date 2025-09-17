@@ -378,12 +378,14 @@ struct StatItem: View {
 struct NewSessionSheet: View {
     @EnvironmentObject var sessionViewModel: SessionListViewModel
     @EnvironmentObject var networkManager: NetworkManager
+    @EnvironmentObject var sessionStateManager: SessionStateManager
     @Environment(\.presentationMode) var presentationMode
 
     @State private var sessionName: String = ""
     @State private var workingDirectory: String = ""
     @State private var useCustomWorkingDir: Bool = false
     @State private var isCreating: Bool = false
+    @State private var errorMessage: String?
 
     // Common working directory presets
     private let workingDirPresets = [
@@ -399,6 +401,24 @@ struct NewSessionSheet: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
+                // Error message if any
+                if let errorMessage = errorMessage {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.1))
+                    )
+                }
+
                 // Session Name Section
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Session Name")
@@ -492,13 +512,38 @@ struct NewSessionSheet: View {
     
     private func createSession() {
         isCreating = true
+        errorMessage = nil
 
         let workingDir = effectiveWorkingDirectory.isEmpty ? nil : effectiveWorkingDirectory
 
-        sessionViewModel.createNewSession(name: sessionName, workingDirectory: workingDir) { success in
-            isCreating = false
-            if success {
-                presentationMode.wrappedValue.dismiss()
+        Task {
+            do {
+                // Create session using SessionStateManager for proper backend integration
+                let session = try await sessionStateManager.createNewSession(
+                    name: sessionName,
+                    workingDirectory: workingDir
+                )
+
+                await MainActor.run {
+                    isCreating = false
+                    print("✅ Created session: \(session.sessionId)")
+
+                    // Update currentSessionId so ContentView can select it
+                    sessionStateManager.currentSessionId = session.sessionId
+
+                    // Also create via legacy SessionListViewModel for compatibility
+                    sessionViewModel.createNewSession(name: sessionName, workingDirectory: workingDir) { _ in
+                        // No-op, just for compatibility
+                    }
+
+                    presentationMode.wrappedValue.dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isCreating = false
+                    errorMessage = "Failed to create session: \(error.localizedDescription)"
+                    print("⚠️ Failed to create session: \(error)")
+                }
             }
         }
     }

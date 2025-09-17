@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
     @State private var restoredSessions: [PersistedSession] = []
+    @State private var isCreatingSession = false
+    @State private var showingNewSessionSheet = false
 
     // MARK: - Initialization
 
@@ -53,16 +55,20 @@ struct ContentView: View {
             initializeApp()
         }
         .task {
-            // Restore sessions using SessionManager persistence
-            do {
-                try await sessionStateManager.restoreSessionsFromPersistence()
+            // Check SessionManager connection status and load sessions
+            await sessionStateManager.checkSessionManagerConnectionStatus()
 
-                // Select most recent active session
+            // Small delay to ensure UI is ready
+            try? await Task.sleep(for: .milliseconds(50))
+
+            // Select most recent active session if available
+            await MainActor.run {
                 if let recentSession = sessionStateManager.activeSessions.first(where: { $0.status == .active }) {
                     selectedSessionId = recentSession.sessionId
+                } else if let firstSession = sessionStateManager.activeSessions.first {
+                    // If no active session, select the first one
+                    selectedSessionId = firstSession.sessionId
                 }
-            } catch {
-                print("⚠️ Failed to restore sessions from SessionManager: \(error)")
             }
         }
     }
@@ -123,6 +129,18 @@ struct ContentView: View {
             setupNetworkConnection()
             setupSessionManagement()
         }
+        .sheet(isPresented: $showingNewSessionSheet) {
+            NewSessionSheet()
+                .environmentObject(networkManager)
+                .environmentObject(sessionListViewModel)
+                .environmentObject(sessionStateManager)
+                .onDisappear {
+                    // Select the newly created session if one was created
+                    if let newSessionId = sessionStateManager.currentSessionId {
+                        selectedSessionId = newSessionId
+                    }
+                }
+        }
     }
 
     // MARK: - Empty State
@@ -146,14 +164,30 @@ struct ContentView: View {
             }
 
             Button(action: createNewSession) {
-                Label("New Session", systemImage: "plus")
-                    .font(.headline)
-                    .foregroundColor(.white)
+                if isCreatingSession {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.8)
+                        Text("Creating...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
-                    .background(Color.blue)
+                    .background(Color.blue.opacity(0.7))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                } else {
+                    Label("New Session", systemImage: "plus")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
             }
+            .disabled(isCreatingSession)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
@@ -177,7 +211,9 @@ struct ContentView: View {
                 await networkManager.updateConfiguration(savedConfig)
                 // Update SessionStateManager with the proper ClaudeService from NetworkManager
                 await sessionStateManager.updateClaudeService(networkManager.claudeService)
-                await restoreSessionsFromPersistence()
+                // Check SessionManager connection status after updating the service - this loads sessions
+                await sessionStateManager.checkSessionManagerConnectionStatus()
+                // No need to call restoreSessionsFromPersistence as checkSessionManagerConnectionStatus already loads sessions
             }
         } else {
             needsBackendSetup = BackendSetupFlow.isSetupRequired()
@@ -193,23 +229,15 @@ struct ContentView: View {
                 await networkManager.updateConfiguration(savedConfig)
                 // Update SessionStateManager with the proper ClaudeService from NetworkManager
                 await sessionStateManager.updateClaudeService(networkManager.claudeService)
+                // Check SessionManager connection status after updating the service - this loads sessions
+                await sessionStateManager.checkSessionManagerConnectionStatus()
                 // Save to Keychain for future use
                 try? savedConfig.saveToKeychain()
-                await restoreSessionsFromPersistence()
+                // No need to call restoreSessionsFromPersistence as checkSessionManagerConnectionStatus already loads sessions
             }
         }
     }
 
-    private func restoreSessionsFromPersistence() async {
-        // SessionManager session restoration is handled in .task modifier above
-        // Legacy SwiftData persistence has been moved to CoreData SessionPersistenceService
-
-        await MainActor.run {
-            self.restoredSessions = [] // No longer used - SessionManager handles this
-        }
-
-        print("✅ Session restoration delegated to SessionManager")
-    }
 
     private func setupNetworkConnection() {
         guard !needsBackendSetup else { return }
@@ -235,9 +263,8 @@ struct ContentView: View {
     }
 
     private func createNewSession() {
-        // This would trigger session creation
-        // Implementation depends on session management approach
-        print("Creating new session...")
+        print("🔍 ContentView: createNewSession button pressed")
+        showingNewSessionSheet = true
     }
 }
 

@@ -181,6 +181,7 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
     }
 
     func createNewSession(name: String? = nil, workingDirectory: String? = nil) async throws -> SessionManagerResponse {
+        print("🔍 SessionStateManager: createNewSession called with name: \(name ?? "nil"), workingDirectory: \(workingDirectory ?? "nil")")
         isLoading = true
         defer { isLoading = false }
 
@@ -197,7 +198,9 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
                 ]
             )
 
+            print("🔍 SessionStateManager: Calling claudeService.createSessionWithManager with request...")
             let session = try await claudeService.createSessionWithManager(request: enhancedRequest)
+            print("🔍 SessionStateManager: Received session response: \(session.sessionId)")
 
             // Add to cache and session list
             await cacheSession(session)
@@ -293,9 +296,8 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
         defer { isLoading = false }
 
         do {
-            // Remove from backend (SessionManager will handle cleanup)
-            // Note: Backend delete endpoint may need implementation
-            // For now, we'll remove from local cache and persistence
+            // Delete from backend first
+            try await claudeService.deleteSession(sessionId: sessionId, userId: userId)
 
             // Remove from cache
             sessionCache.removeValue(forKey: sessionId)
@@ -414,6 +416,67 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
         }
     }
 
+    // MARK: - Connection Status Management
+
+    func checkSessionManagerConnectionStatus() async {
+        // Check SessionManager health/connection status
+        sessionManagerStatus = .connecting
+
+        do {
+            // Try to get ALL sessions to verify SessionManager is working and populate the list
+            let sessionList = try await claudeService.getSessions(
+                request: SessionListRequest(userId: userId, limit: 50, offset: 0, statusFilter: nil)
+            )
+
+            // If we successfully get a response, SessionManager is connected
+            sessionManagerStatus = .connected
+            print("✅ SessionManager connected - found \(sessionList.totalCount) sessions")
+
+            // Update activeSessions with all sessions
+            activeSessions = sessionList.sessions.map { session in
+                convertToSessionManagerResponse(session)
+            }
+
+            // Also update the session cache
+            for session in activeSessions {
+                sessionCache[session.sessionId] = session
+            }
+        } catch {
+            // If we get an error, SessionManager is not available
+            sessionManagerStatus = .disconnected
+            print("⚠️ SessionManager not available: \(error)")
+        }
+    }
+
+    private func convertToSessionManagerResponse(_ session: SessionResponse) -> SessionManagerResponse {
+        // Extract working directory from context dictionary
+        let workingDir: String
+        if let contextValue = session.context["working_directory"] {
+            // AnyCodable is an enum, extract the string case
+            switch contextValue {
+            case .string(let value):
+                workingDir = value
+            default:
+                workingDir = "/"
+            }
+        } else {
+            workingDir = "/"
+        }
+
+        return SessionManagerResponse(
+            sessionId: session.sessionId,
+            userId: session.userId,
+            sessionName: session.sessionName,
+            workingDirectory: workingDir,
+            status: session.status,
+            createdAt: session.createdAt,
+            lastActiveAt: session.updatedAt,
+            messageCount: session.messageCount,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        )
+    }
+
     // MARK: - App Lifecycle Handling
 
     private func handleAppWillEnterForeground() async {
@@ -490,32 +553,6 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
         }
     }
 
-    // MARK: - Type Conversion Methods
-
-    private func convertToSessionManagerResponse(_ sessionResponse: SessionResponse) -> SessionManagerResponse {
-        return SessionManagerResponse(
-            sessionId: sessionResponse.sessionId,
-            userId: sessionResponse.userId,
-            sessionName: sessionResponse.sessionName,
-            workingDirectory: "/default/path", // Default working directory
-            status: sessionResponse.status,
-            createdAt: sessionResponse.createdAt,
-            lastActiveAt: sessionResponse.updatedAt,
-            messageCount: sessionResponse.messageCount,
-            conversationHistory: sessionResponse.messages.map { message in
-                ConversationMessage(
-                    id: message.id,
-                    role: message.role,
-                    content: message.content,
-                    timestamp: message.timestamp,
-                    sessionId: sessionResponse.sessionId,
-                    messageId: message.id,
-                    sessionManagerContext: message.metadata
-                )
-            },
-            sessionManagerStats: nil // Will be populated separately if needed
-        )
-    }
 
     // MARK: - Service Updates
 

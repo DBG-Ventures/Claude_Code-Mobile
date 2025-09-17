@@ -75,11 +75,10 @@ class ConversationViewModel: ObservableObject {
         self.sessionStateManager = sessionStateManager
         setupSessionStateObservers()
 
-        // Auto-load current session if available
+        // Don't auto-create sessions here - wait for explicit load calls
         if let currentSessionId = sessionStateManager.currentSessionId {
-            loadSessionWithManager(sessionId: currentSessionId)
-        } else {
-            createInitialSessionWithManager()
+            print("🔍 ConversationViewModel: SessionStateManager has current session: \(currentSessionId)")
+            // Don't auto-load, let ConversationView handle this
         }
     }
     
@@ -448,12 +447,44 @@ class ConversationViewModel: ObservableObject {
 
             await MainActor.run {
                 self.currentSession = sessionResponse
-                // Note: With Claude SDK session management, conversation history is maintained
-                // by the SDK itself through session resumption. The UI starts fresh but
-                // Claude will remember the conversation context when new messages are sent.
-                self.messages = []
+
+                // If we have SessionStateManager, ensure the session is in the cache
+                if let sessionStateManager = self.sessionStateManager {
+                    // Try to get from cache first
+                    if let sessionManagerResponse = sessionStateManager.getSession(sessionId) {
+                        self.currentSessionManager = sessionManagerResponse
+                    } else {
+                        // Convert SessionResponse to SessionManagerResponse
+                        let sessionManagerResponse = SessionManagerResponse(
+                            sessionId: sessionResponse.sessionId,
+                            userId: sessionResponse.userId,
+                            sessionName: sessionResponse.sessionName,
+                            workingDirectory: "/",
+                            status: sessionResponse.status,
+                            createdAt: sessionResponse.createdAt,
+                            lastActiveAt: sessionResponse.updatedAt,
+                            messageCount: sessionResponse.messageCount,
+                            conversationHistory: nil,
+                            sessionManagerStats: nil
+                        )
+                        self.currentSessionManager = sessionManagerResponse
+                    }
+                }
+
+                // Load conversation history from the session response
+                self.messages = sessionResponse.messages.map { message in
+                    ClaudeMessage(
+                        id: message.id,
+                        content: message.content,
+                        role: message.role,
+                        timestamp: message.timestamp,
+                        sessionId: sessionId,
+                        metadata: message.metadata
+                    )
+                }
+
                 self.isLoading = false
-                print("✅ Loaded session \(sessionId) - conversation history maintained by Claude SDK")
+                print("✅ Loaded session \(sessionId) with \(sessionResponse.messages.count) messages")
             }
         } catch ClaudeServiceError.sessionNotFound {
             await MainActor.run {
@@ -510,12 +541,17 @@ class ConversationViewModel: ObservableObject {
     }
 
     private func createInitialSessionWithManager() {
-        guard let sessionStateManager = sessionStateManager else { return }
+        guard let sessionStateManager = sessionStateManager else {
+            print("❌ ConversationViewModel: SessionStateManager is nil, cannot create session")
+            return
+        }
 
+        print("🔍 ConversationViewModel: Starting session creation...")
         isLoading = true
 
         Task {
             do {
+                print("🔍 ConversationViewModel: Calling sessionStateManager.createNewSession...")
                 let session = try await sessionStateManager.createNewSession(
                     name: "Mobile Chat Session",
                     workingDirectory: nil
@@ -529,6 +565,7 @@ class ConversationViewModel: ObservableObject {
                 }
 
             } catch {
+                print("❌ ConversationViewModel: Session creation failed: \(error)")
                 await MainActor.run {
                     self.setError(ErrorResponse(
                         error: "session_creation_error",
@@ -602,18 +639,30 @@ class ConversationViewModel: ObservableObject {
     private func loadConversationHistoryFromSessionManager(sessionId: String) async {
         guard let sessionStateManager = sessionStateManager else { return }
 
-        do {
-            let history = try await sessionStateManager.loadConversationHistory(for: sessionId)
-
+        // Get the session from SessionStateManager cache
+        if let session = sessionStateManager.getSession(sessionId) {
             await MainActor.run {
-                self.conversationHistory = history
-                // Convert conversation history to UI messages
-                self.messages = history.map { $0.toClaudeMessage() }
-                print("✅ Loaded \(history.count) messages from conversation history")
+                // Load conversation history from the session
+                if let history = session.conversationHistory {
+                    self.messages = history.map { convMessage in
+                        ClaudeMessage(
+                            id: convMessage.messageId ?? convMessage.id,
+                            content: convMessage.content,
+                            role: convMessage.role,
+                            timestamp: convMessage.timestamp,
+                            sessionId: sessionId,
+                            metadata: convMessage.sessionManagerContext ?? [:]
+                        )
+                    }
+                    print("✅ Loaded \(history.count) messages from SessionManager session")
+                } else {
+                    // No conversation history yet
+                    self.messages = []
+                    print("✅ SessionManager session has no messages yet")
+                }
             }
-
-        } catch {
-            print("⚠️ Failed to load conversation history: \(error)")
+        } else {
+            print("⚠️ Session not found in SessionManager cache")
             // Don't show error to user for history loading failures
         }
     }

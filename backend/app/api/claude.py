@@ -378,8 +378,15 @@ async def delete_session(
                 detail=f"Session {session_id} not found or access denied",
             )
 
-        # Note: In a full implementation, you'd add a delete method to ClaudeService
-        # For now, return success as this is a minimal implementation
+        # Actually delete the session
+        success = await claude_service.delete_session(session_id, user_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete session {session_id}",
+            )
+
         return JSONResponse(
             status_code=200,
             content={

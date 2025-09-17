@@ -118,10 +118,14 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     }
 
     deinit {
-        Task { @MainActor in
-            disconnect()
-        }
+        // Clean up without async operations in deinit
+        // The disconnect will happen through lifecycle observers
         cancellables.removeAll()
+
+        // Synchronously clean up any remaining background tasks
+        if backgroundTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        }
     }
 
     // MARK: - Lifecycle Management
@@ -291,18 +295,48 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
         return try decoder.decode(SessionListResponse.self, from: data)
     }
 
+    func deleteSession(sessionId: String, userId: String = "mobile-user") async throws {
+        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions/\(sessionId)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userId)
+        ]
+
+        guard let url = components.url else {
+            throw ClaudeServiceError.invalidURL
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "DELETE"
+
+        let (_, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeServiceError.invalidResponse
+        }
+
+        if httpResponse.statusCode != 200 && httpResponse.statusCode != 204 {
+            throw ClaudeServiceError.serverError("Failed to delete session")
+        }
+    }
+
     // MARK: - Enhanced SessionManager Integration
 
     func createSessionWithManager(request: EnhancedSessionRequest) async throws -> SessionManagerResponse {
+        print("🔍 ClaudeService: createSessionWithManager called")
+        print("🔍 ClaudeService: Base URL: \(baseURL)")
         let url = baseURL.appendingPathComponent("claude/sessions")
+        print("🔍 ClaudeService: Full URL: \(url)")
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestData = try encoder.encode(request)
         urlRequest.httpBody = requestData
+        print("🔍 ClaudeService: Request body size: \(requestData.count) bytes")
 
+        print("🔍 ClaudeService: Making HTTP request to backend...")
         let (data, response) = try await session.data(for: urlRequest)
+        print("🔍 ClaudeService: Received response from backend")
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ClaudeServiceError.invalidResponse
