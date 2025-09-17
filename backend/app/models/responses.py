@@ -35,6 +35,7 @@ class ChunkType(str, Enum):
     ASSISTANT = "assistant"
     THINKING = "thinking"
     TOOL = "tool"
+    TOOL_RESULT = "tool_result"
     SYSTEM = "system"
     COMPLETE = "complete"
     ERROR = "error"
@@ -60,6 +61,9 @@ class StreamingChunk(BaseModel):
     chunk_type: ChunkType = Field(ChunkType.DELTA, description="Type of chunk")
     message_id: Optional[str] = Field(None, description="Associated message ID")
     session_id: Optional[str] = Field(None, description="Session identifier")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default_factory=dict, description="Additional chunk metadata"
+    )
     error: Optional[str] = Field(
         None, description="Error message if chunk_type is error"
     )

@@ -328,22 +328,76 @@ class ClaudeService:
                 )
                 raise RuntimeError(f"Query failed: {e}")
 
-            # Stream response chunks with mobile optimization
+            # Stream response chunks with proper Claude Code SDK message type handling
             async for message in client.receive_response():
-                if hasattr(message, "content"):
+                # Handle AssistantMessage and UserMessage (which contain content blocks)
+                if hasattr(message, "content") and message.content:
                     for block in message.content:
-                        if hasattr(block, "text"):
-                            chunk_text = block.text
+                        block_type = block.__class__.__name__
 
+                        if block_type == "TextBlock" and hasattr(block, "text"):
                             yield StreamingChunk(
                                 chunk_type=ChunkType.DELTA,
-                                content=chunk_text,
+                                content=block.text,
                                 message_id=str(uuid.uuid4()),
                                 session_id=request.session_id,
                             )
 
-                            # Mobile optimization - preserve existing pattern
-                            await asyncio.sleep(0.01)
+                        elif block_type == "ToolUseBlock":
+                            tool_name = getattr(block, "name", "unknown")
+                            tool_input = getattr(block, "input", {})
+                            tool_id = getattr(block, "id", "")
+
+                            # Format tool usage message for display
+                            if tool_name == "Bash":
+                                command = tool_input.get("command", "")
+                                description = tool_input.get("description", "")
+                                content = f"🔧 Running: {description}\n```bash\n{command}\n```" if description else f"🔧 Running command:\n```bash\n{command}\n```"
+                            else:
+                                content = f"🔧 Using {tool_name}"
+                                if tool_input:
+                                    content += f" with parameters: {str(tool_input)[:100]}..."
+
+                            yield StreamingChunk(
+                                chunk_type=ChunkType.TOOL,
+                                content=content,
+                                message_id=str(uuid.uuid4()),
+                                session_id=request.session_id,
+                                metadata={
+                                    "tool_name": tool_name,
+                                    "tool_input": str(tool_input),
+                                    "tool_id": tool_id
+                                }
+                            )
+
+                        elif block_type == "ToolResultBlock":
+                            tool_content = getattr(block, "content", "")
+                            tool_use_id = getattr(block, "tool_use_id", "")
+                            is_error = getattr(block, "is_error", False)
+
+                            # Format tool result for display
+                            if is_error:
+                                content = f"❌ Tool Error:\n```\n{tool_content}\n```"
+                            else:
+                                # Truncate very long results for better UX
+                                if len(str(tool_content)) > 1000:
+                                    content = f"📋 Tool Result:\n```\n{str(tool_content)[:1000]}...\n[Output truncated]\n```"
+                                else:
+                                    content = f"📋 Tool Result:\n```\n{tool_content}\n```"
+
+                            yield StreamingChunk(
+                                chunk_type=ChunkType.TOOL_RESULT,
+                                content=content,
+                                message_id=str(uuid.uuid4()),
+                                session_id=request.session_id,
+                                metadata={
+                                    "tool_use_id": tool_use_id,
+                                    "is_error": is_error
+                                }
+                            )
+
+                        # Mobile optimization - preserve existing pattern
+                        await asyncio.sleep(0.01)
 
             # Yield completion chunk
             yield StreamingChunk(

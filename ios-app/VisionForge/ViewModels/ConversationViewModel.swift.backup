@@ -32,6 +32,7 @@ class ConversationViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var streamingContinuation: Task<Void, Never>?
     private var currentSessionId: String?
+    private var useSessionManager: Bool = true // Flag to use enhanced SessionManager features
 
     // Message accumulation optimization
     private var messageBuffer: String = ""
@@ -65,7 +66,9 @@ class ConversationViewModel: ObservableObject {
     
     func setClaudeService(_ service: ClaudeService) {
         self.claudeService = service
-        // Session management now handled by SessionManager
+        if !useSessionManager {
+            createInitialSessionIfNeeded()
+        }
     }
 
     func setSessionStateManager(_ sessionStateManager: SessionStateManager) {
@@ -80,7 +83,11 @@ class ConversationViewModel: ObservableObject {
     }
     
     func sendMessage(_ content: String) {
-        sendMessageWithSessionManager(content)
+        if useSessionManager, let sessionStateManager = sessionStateManager {
+            sendMessageWithSessionManager(content)
+        } else {
+            sendMessageLegacy(content)
+        }
     }
 
     private func sendMessageWithSessionManager(_ content: String) {
@@ -119,6 +126,34 @@ class ConversationViewModel: ObservableObject {
         startStreamingResponseWithSessionManager(query: content, sessionId: currentSessionManager.sessionId)
     }
 
+    private func sendMessageLegacy(_ content: String) {
+        guard let claudeService = claudeService,
+              let session = currentSession else {
+            setError(ErrorResponse(
+                error: "configuration_error",
+                message: "Claude service not configured or no active session",
+                details: nil,
+                timestamp: Date(),
+                requestId: nil
+            ))
+            return
+        }
+
+        // Add user message immediately
+        let userMessage = ClaudeMessage(
+            id: UUID().uuidString,
+            content: content,
+            role: .user,
+            timestamp: Date(),
+            sessionId: session.sessionId
+        )
+
+        messages.append(userMessage)
+
+        // Start streaming Claude's response
+        startStreamingResponse(query: content, sessionId: session.sessionId)
+    }
+    
     func stopStreaming() {
         streamingContinuation?.cancel()
         isStreaming = false
@@ -191,8 +226,135 @@ class ConversationViewModel: ObservableObject {
         }
     }
     
+    private func startStreamingResponse(query: String, sessionId: String) {
+        guard let claudeService = claudeService else { return }
 
-    // MARK: - Session Management with SessionManager
+        isStreaming = true
+        let messageId = UUID().uuidString
+        streamingMessageId = messageId
+
+        // Reset buffer
+        messageBuffer = ""
+        lastUpdateTime = Date()
+
+        // Start buffer update timer for smooth UI updates
+        startBufferTimer(messageId: messageId, sessionId: sessionId)
+
+        // Start streaming task
+        streamingContinuation = Task {
+            do {
+                let queryRequest = ClaudeQueryRequest(
+                    sessionId: sessionId,
+                    query: query,
+                    userId: userId,
+                    stream: true,
+                    options: claudeOptions,
+                    context: [:]
+                )
+
+                var accumulatedContent = ""
+                var messageCreated = false
+
+                for try await chunk in claudeService.streamQuery(request: queryRequest) {
+                    guard !Task.isCancelled else { break }
+
+                    switch chunk.chunkType {
+                    case .start:
+                        // Streaming has started, continue processing
+                        break
+
+                    case .delta:
+                        // Buffer the content for optimized updates
+                        if let content = chunk.content {
+                            accumulatedContent += content
+
+                            await MainActor.run {
+                                self.messageBuffer += content
+
+                                // Create message if it doesn't exist yet
+                                if !messageCreated {
+                                    let deltaMessage = ClaudeMessage(
+                                        id: messageId,
+                                        content: "",
+                                        role: .assistant,
+                                        timestamp: Date(),
+                                        sessionId: sessionId
+                                    )
+                                    self.messages.append(deltaMessage)
+                                    messageCreated = true
+                                }
+
+                                // Force update if buffer is too large or too much time has passed
+                                let timeSinceLastUpdate = Date().timeIntervalSince(self.lastUpdateTime)
+                                if self.messageBuffer.count > self.maxBufferSize || timeSinceLastUpdate > 1.0 {
+                                    self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                                }
+                            }
+                        }
+
+                    case .assistant, .thinking, .tool, .system:
+                        // Flush buffer before adding special message
+                        await MainActor.run {
+                            if !self.messageBuffer.isEmpty {
+                                self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                            }
+
+                            // Create separate message bubbles for each thinking step/tool usage
+                            if let content = chunk.content, !content.isEmpty {
+                                let stepMessageId = UUID().uuidString
+                                let stepMessage = ClaudeMessage(
+                                    id: stepMessageId,
+                                    content: content,
+                                    role: .assistant,
+                                    timestamp: Date(),
+                                    sessionId: sessionId,
+                                    metadata: [
+                                        "chunk_type": .string(chunk.chunkType.rawValue),
+                                        "is_thinking_step": .bool(true)
+                                    ]
+                                )
+                                self.messages.append(stepMessage)
+                            }
+                        }
+
+                    case .complete:
+                        await MainActor.run {
+                            // Final flush of any remaining buffer
+                            if !self.messageBuffer.isEmpty {
+                                self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                            }
+                            self.stopBufferTimer()
+                            self.isStreaming = false
+                            self.streamingMessageId = nil
+                        }
+
+                    case .error:
+                        await MainActor.run {
+                            self.stopBufferTimer()
+                            let errorMessage = chunk.error ?? chunk.message ?? chunk.content ?? "Unknown streaming error"
+                            self.handleStreamingError(errorMessage)
+                        }
+                    }
+                }
+
+                await MainActor.run {
+                    // Final cleanup
+                    if !self.messageBuffer.isEmpty {
+                        self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                    }
+                    self.stopBufferTimer()
+                    self.isStreaming = false
+                    self.streamingMessageId = nil
+                }
+
+            } catch {
+                await MainActor.run {
+                    self.stopBufferTimer()
+                    self.handleStreamingError(error.localizedDescription)
+                }
+            }
+        }
+    }
 
     private func startBufferTimer(messageId: String, sessionId: String) {
         stopBufferTimer()  // Clean up any existing timer
@@ -509,7 +671,15 @@ class ConversationViewModel: ObservableObject {
         guard let claudeService = claudeService else { return }
 
         isStreaming = true
-        streamingMessageId = sessionId
+        let messageId = UUID().uuidString
+        streamingMessageId = messageId
+
+        // Reset buffer
+        messageBuffer = ""
+        lastUpdateTime = Date()
+
+        // Start buffer update timer for smooth UI updates
+        startBufferTimer(messageId: messageId, sessionId: sessionId)
 
         // Start streaming task with SessionManager
         streamingContinuation = Task {
@@ -523,6 +693,9 @@ class ConversationViewModel: ObservableObject {
                     context: [:]
                 )
 
+                var accumulatedContent = ""
+                var messageCreated = false
+
                 // Use SessionManager streaming for enhanced context preservation
                 for try await chunk in claudeService.streamQueryWithSessionManager(request: queryRequest) {
                     guard !Task.isCancelled else { break }
@@ -532,86 +705,59 @@ class ConversationViewModel: ObservableObject {
                         break
 
                     case .delta:
-                        if let content = chunk.content, !content.isEmpty {
+                        if let content = chunk.content {
+                            accumulatedContent += content
+
                             await MainActor.run {
-                                // Create a separate message bubble for each delta chunk
-                                let deltaMessageId = chunk.messageId ?? UUID().uuidString
-                                let deltaMessage = ClaudeMessage(
-                                    id: deltaMessageId,
-                                    content: content,
-                                    role: .assistant,
-                                    timestamp: Date(),
-                                    sessionId: sessionId
-                                )
-                                self.messages.append(deltaMessage)
+                                self.messageBuffer += content
+
+                                if !messageCreated {
+                                    let deltaMessage = ClaudeMessage(
+                                        id: messageId,
+                                        content: "",
+                                        role: .assistant,
+                                        timestamp: Date(),
+                                        sessionId: sessionId
+                                    )
+                                    self.messages.append(deltaMessage)
+                                    messageCreated = true
+                                }
+
+                                let timeSinceLastUpdate = Date().timeIntervalSince(self.lastUpdateTime)
+                                if self.messageBuffer.count > self.maxBufferSize || timeSinceLastUpdate > 1.0 {
+                                    self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                                }
                             }
                         }
 
                     case .complete:
                         await MainActor.run {
+                            if !self.messageBuffer.isEmpty {
+                                self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                            }
+                            self.stopBufferTimer()
                             self.isStreaming = false
                             self.streamingMessageId = nil
 
-                            // Save all assistant messages from this session to conversation history
-                            Task {
-                                await self.sessionStateManager?.updateSessionLastActive(sessionId)
+                            // Save final assistant message to conversation history
+                            if let finalMessage = self.messages.first(where: { $0.id == messageId }) {
+                                let conversationMessage = ConversationMessage.from(finalMessage)
+                                Task {
+                                    await self.sessionStateManager?.saveConversationMessage(conversationMessage)
+                                    await self.sessionStateManager?.updateSessionLastActive(sessionId)
+                                }
                             }
                         }
 
                     case .error:
                         await MainActor.run {
+                            self.stopBufferTimer()
                             let errorMessage = chunk.error ?? chunk.message ?? chunk.content ?? "Unknown streaming error"
                             self.handleStreamingError(errorMessage)
                         }
 
-                    case .assistant, .thinking, .tool, .toolResult, .system:
-                        await MainActor.run {
-                            // Create separate message bubbles for each specialized chunk type
-                            if let content = chunk.content, !content.isEmpty {
-                                let stepMessageId = UUID().uuidString
-                                var metadata: [String: AnyCodable] = [
-                                    "chunk_type": .string(chunk.chunkType.rawValue)
-                                ]
-
-                                // Add chunk-specific metadata
-                                switch chunk.chunkType {
-                                case .thinking:
-                                    metadata["is_thinking_step"] = .bool(true)
-                                    if let signature = chunk.metadata?["signature"] as? String {
-                                        metadata["signature"] = .string(signature)
-                                    }
-                                case .tool:
-                                    if let toolName = chunk.metadata?["tool_name"] as? String {
-                                        metadata["tool_name"] = .string(toolName)
-                                    }
-                                    if let toolInput = chunk.metadata?["tool_input"] as? String {
-                                        metadata["tool_input"] = .string(toolInput)
-                                    }
-                                    if let toolId = chunk.metadata?["tool_id"] as? String {
-                                        metadata["tool_id"] = .string(toolId)
-                                    }
-                                case .toolResult:
-                                    if let toolUseId = chunk.metadata?["tool_use_id"] as? String {
-                                        metadata["tool_use_id"] = .string(toolUseId)
-                                    }
-                                    if let isError = chunk.metadata?["is_error"] as? Bool {
-                                        metadata["is_error"] = .bool(isError)
-                                    }
-                                default:
-                                    break
-                                }
-
-                                let stepMessage = ClaudeMessage(
-                                    id: stepMessageId,
-                                    content: content,
-                                    role: .assistant,
-                                    timestamp: Date(),
-                                    sessionId: sessionId,
-                                    metadata: metadata
-                                )
-                                self.messages.append(stepMessage)
-                            }
-                        }
+                    default:
+                        break
                     }
                 }
 

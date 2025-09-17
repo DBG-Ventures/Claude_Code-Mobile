@@ -34,6 +34,7 @@ enum StreamingChunkType: String, Codable {
     case assistant = "assistant"
     case thinking = "thinking"
     case tool = "tool"
+    case toolResult = "tool_result"
     case system = "system"
 }
 
@@ -76,6 +77,7 @@ struct StreamingChunk: Identifiable, Codable {
     let chunkType: StreamingChunkType
     let messageId: String?
     let timestamp: Date
+    let metadata: [String: AnyCodable]?
 
     // Error fields for handling backend errors
     let error: String?
@@ -86,15 +88,17 @@ struct StreamingChunk: Identifiable, Codable {
         case chunkType = "chunk_type"
         case messageId = "message_id"
         case timestamp
+        case metadata
         case error
         case message
     }
 
-    init(content: String? = nil, chunkType: StreamingChunkType = .delta, messageId: String? = nil, timestamp: Date = Date(), error: String? = nil, message: String? = nil) {
+    init(content: String? = nil, chunkType: StreamingChunkType = .delta, messageId: String? = nil, timestamp: Date = Date(), metadata: [String: AnyCodable]? = nil, error: String? = nil, message: String? = nil) {
         self.content = content
         self.chunkType = chunkType
         self.messageId = messageId
         self.timestamp = timestamp
+        self.metadata = metadata
         self.error = error
         self.message = message
     }
