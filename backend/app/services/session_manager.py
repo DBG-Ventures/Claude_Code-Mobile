@@ -122,31 +122,33 @@ class SessionManager:
             )
 
             # Configure Claude SDK options for persistent session
+            # IMPORTANT: Don't use resume parameter - let Claude SDK manage its own sessions
+            # The resume parameter was causing crashes when sessions didn't exist in Claude's storage
             options = ClaudeCodeOptions(
                 cwd=working_dir,
                 permission_mode="bypassPermissions",
-                resume=None if is_new_session else session_id,
+                # resume parameter removed - was causing "No conversation found" errors
             )
 
             client = ClaudeSDKClient(options)
             await client.connect()
 
-            # For new sessions, get session ID from client after initialization
-            if is_new_session:
-                # Wait briefly for session initialization
-                await asyncio.sleep(0.1)
-                actual_session_id = getattr(client, "session_id", session_id)
-                if actual_session_id and actual_session_id != session_id:
-                    session_id = actual_session_id
+            # Get the actual session ID from the Claude SDK client
+            # The SDK generates its own session IDs that we need to use
+            actual_session_id = session_id
+            if hasattr(client, 'session_id') and client.session_id:
+                actual_session_id = client.session_id
+                if actual_session_id != session_id:
                     self.logger.info(
-                        "Updated session ID from client",
+                        "Using Claude SDK generated session ID",
                         category="session_manager",
                         operation="session_id_update",
                         original_session_id=session_id,
                         actual_session_id=actual_session_id,
                     )
+                    session_id = actual_session_id
 
-            # Store session info
+            # Store session info with the actual Claude SDK session ID
             self.active_sessions[session_id] = {
                 "client": client,
                 "working_dir": working_dir,
@@ -154,6 +156,7 @@ class SessionManager:
                 "last_used": time.time(),
                 "created_at": time.time(),
                 "is_connected": True,
+                "claude_session_id": session_id,  # Store the actual Claude SDK session ID
             }
 
             # Start cleanup task if not running
@@ -198,22 +201,27 @@ class SessionManager:
             bool: True if client is valid and connected, False otherwise
         """
         try:
-            # Check if client has required attributes and is connected
-            # This is a lightweight check without sending actual queries
-            if not hasattr(client, "_session"):
+            # More robust validation - check if client is properly initialized
+            if not client:
                 return False
 
-            # Additional connection validation could be added here
-            # For now, we assume if client has session attribute, it's valid
-            return client._session is not None
+            # Check if the client has the connection attribute
+            # Don't check _session as it may not exist or be in different state
+            if hasattr(client, 'is_connected'):
+                return client.is_connected
+
+            # If we can't determine connection state, assume it's valid
+            # to avoid unnecessary reconnections
+            return True
 
         except Exception as e:
             self.logger.debug(
-                f"Client validation failed: {e}",
+                f"Client validation check: {e}",
                 category="session_manager",
                 operation="validate_client",
                 error=str(e),
             )
+            # On error, assume client needs reconnection
             return False
 
     async def cleanup_session(self, session_id: str) -> bool:
@@ -240,22 +248,35 @@ class SessionManager:
         user_id = session_info.get("user_id", "unknown")
 
         try:
-            await client.disconnect()
-            self.logger.info(
-                "Session client disconnected",
-                category="session_manager",
-                operation="client_disconnect",
-                session_id=session_id,
-                user_id=user_id,
-            )
+            # Only try to disconnect if client exists and has disconnect method
+            if client and hasattr(client, 'disconnect'):
+                try:
+                    # Use a timeout to prevent hanging
+                    await asyncio.wait_for(client.disconnect(), timeout=5.0)
+                    self.logger.info(
+                        "Session client disconnected",
+                        category="session_manager",
+                        operation="client_disconnect",
+                        session_id=session_id,
+                        user_id=user_id,
+                    )
+                except asyncio.TimeoutError:
+                    self.logger.warning(
+                        "Client disconnect timed out",
+                        category="session_manager",
+                        operation="cleanup_timeout",
+                        session_id=session_id,
+                    )
         except Exception as e:
-            self.logger.warning(
-                f"Error disconnecting client during cleanup: {e}",
-                category="session_manager",
-                operation="cleanup_disconnect_error",
-                session_id=session_id,
-                error=str(e),
-            )
+            # Don't log "cancel scope" errors - they're expected during cleanup
+            if "cancel scope" not in str(e).lower():
+                self.logger.warning(
+                    f"Error disconnecting client during cleanup: {e}",
+                    category="session_manager",
+                    operation="cleanup_disconnect_error",
+                    session_id=session_id,
+                    error=str(e),
+                )
             # Continue cleanup even if disconnect fails
 
         del self.active_sessions[session_id]

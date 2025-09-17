@@ -241,6 +241,7 @@ struct ConversationView: View {
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(1...5)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                     .onChange(of: messageText) { newValue in
                         isComposing = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
@@ -277,6 +278,7 @@ struct ConversationView: View {
             .regularMaterial,
             in: Rectangle()
         )
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
     
     // MARK: - Computed Properties

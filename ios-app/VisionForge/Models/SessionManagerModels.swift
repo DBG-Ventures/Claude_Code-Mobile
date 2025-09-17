@@ -34,9 +34,12 @@ struct SessionManagerResponse: Identifiable, Codable, Hashable {
         case status
         case createdAt = "created_at"
         case lastActiveAt = "last_active_at"
+        case updatedAt = "updated_at"  // Backend uses this instead of last_active_at
         case messageCount = "message_count"
         case conversationHistory = "conversation_history"
+        case messages  // Backend uses this instead of conversation_history
         case sessionManagerStats = "session_manager_stats"
+        case context
     }
 
     init(sessionId: String, userId: String, sessionName: String? = nil,
@@ -54,6 +57,78 @@ struct SessionManagerResponse: Identifiable, Codable, Hashable {
         self.messageCount = messageCount
         self.conversationHistory = conversationHistory
         self.sessionManagerStats = sessionManagerStats
+    }
+
+    // Custom encoder to match backend format
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(userId, forKey: .userId)
+        try container.encodeIfPresent(sessionName, forKey: .sessionName)
+        try container.encode(status, forKey: .status)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(lastActiveAt, forKey: .updatedAt)
+        try container.encode(messageCount, forKey: .messageCount)
+
+        // Encode conversation history as messages for backend compatibility
+        if let history = conversationHistory {
+            let messages = history.map { $0.toClaudeMessage() }
+            try container.encode(messages, forKey: .messages)
+        }
+
+        try container.encodeIfPresent(sessionManagerStats, forKey: .sessionManagerStats)
+
+        // Encode working_directory in context for backend compatibility
+        let context: [String: AnyCodable] = ["working_directory": .string(workingDirectory)]
+        try container.encode(context, forKey: .context)
+    }
+
+    // Custom decoder to handle backend response format
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        userId = try container.decode(String.self, forKey: .userId)
+        sessionName = try container.decodeIfPresent(String.self, forKey: .sessionName)
+        status = try container.decode(SessionStatus.self, forKey: .status)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+
+        // Try last_active_at first, fall back to updated_at
+        if let lastActive = try? container.decode(Date.self, forKey: .lastActiveAt) {
+            lastActiveAt = lastActive
+        } else {
+            lastActiveAt = try container.decode(Date.self, forKey: .updatedAt)
+        }
+
+        messageCount = try container.decode(Int.self, forKey: .messageCount)
+
+        // Try conversation_history first, fall back to messages
+        if let history = try? container.decodeIfPresent([ConversationMessage].self, forKey: .conversationHistory) {
+            conversationHistory = history
+        } else if let messages = try? container.decodeIfPresent([ClaudeMessage].self, forKey: .messages) {
+            conversationHistory = messages.map { ConversationMessage.from($0) }
+        } else {
+            conversationHistory = nil
+        }
+
+        sessionManagerStats = try container.decodeIfPresent(SessionManagerStats.self, forKey: .sessionManagerStats)
+
+        // Extract working_directory from context if not at root level
+        if let workingDir = try? container.decode(String.self, forKey: .workingDirectory) {
+            workingDirectory = workingDir
+        } else if let context = try? container.decode([String: AnyCodable].self, forKey: .context),
+                  let workingDirValue = context["working_directory"] {
+            switch workingDirValue {
+            case .string(let dir):
+                workingDirectory = dir
+            default:
+                workingDirectory = "/Users/brianpistone/Development/DBGVentures/Claude_Code-Mobile"
+            }
+        } else {
+            // Default working directory
+            workingDirectory = "/Users/brianpistone/Development/DBGVentures/Claude_Code-Mobile"
+        }
     }
 }
 
