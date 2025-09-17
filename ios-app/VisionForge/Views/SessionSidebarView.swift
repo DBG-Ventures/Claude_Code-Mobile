@@ -72,6 +72,8 @@ struct SessionSidebarView: View {
         .sheet(isPresented: $showingSettings) {
             EditableSettingsView()
                 .environmentObject(networkManager)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .alert("Delete Session", isPresented: $showingDeleteAlert) {
             Button("Cancel", role: .cancel) {}
