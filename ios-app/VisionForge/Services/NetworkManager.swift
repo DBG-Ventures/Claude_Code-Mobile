@@ -114,7 +114,9 @@ class NetworkManager: ObservableObject {
 
     private func handleNetworkUnavailable() {
         print("🚫 Network became unavailable")
-        claudeService.disconnect()
+        Task {
+            await claudeService.disconnect()
+        }
     }
 
     // MARK: - Configuration Management
@@ -128,7 +130,7 @@ class NetworkManager: ObservableObject {
         }
 
         // Disconnect current service if exists
-        claudeService.disconnect()
+        await claudeService.disconnect()
 
         // Update configuration
         activeConfig = newConfig

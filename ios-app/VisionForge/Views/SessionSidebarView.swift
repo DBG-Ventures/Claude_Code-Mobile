@@ -502,110 +502,407 @@ struct SidebarSessionRow: View {
     let onDelete: (SessionResponse) -> Void
     @EnvironmentObject var sessionStateManager: SessionStateManager
 
+    // MARK: - Liquid Glass Enhancement State
+
+    @State private var liquidScale: CGFloat = 1.0
+    @State private var liquidGlow: Double = 0.0
+    @State private var isPressed: Bool = false
+    @State private var selectionProgress: Double = 0.0
+    @State private var flowingHighlight: Bool = false
+
+    // MARK: - System Integration
+
+    @EnvironmentObject private var accessibilityManager: AccessibilityManager
+    @EnvironmentObject private var performanceMonitor: LiquidPerformanceMonitor
+
+    // MARK: - Environment
+
+    @Environment(\.accessibilityReduceTransparency) var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+
     var body: some View {
         HStack(spacing: 12) {
-            // Enhanced status indicator with SessionManager benefits
-            VStack(spacing: 2) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
+            // Liquid Enhanced Status Indicator
+            liquidStatusIndicator
 
-                // SessionManager persistent client indicator
-                if isSessionManagerSession {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 6))
-                        .foregroundColor(.orange)
-                }
-            }
-
-            // Session content with SessionManager metadata
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(session.sessionName ?? "Untitled")
-                        .font(.body)
-                        .fontWeight(isSelected ? .semibold : .medium)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-
-                    // SessionManager instant switching indicator
-                    if isSessionManagerSession {
-                        Image(systemName: "speedometer")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
-
-                    Spacer()
-
-                    Text(formatRelativeTime(session.updatedAt))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-
-                HStack {
-                    Text("\(session.messageCount)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-
-                    Text("messages")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-
-                    // SessionManager session type indicator
-                    if isSessionManagerSession {
-                        Text("• Persistent")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                    }
-
-                    Spacer()
-
-                    // Delete button (only show when selected or on hover)
-                    if isSelected {
-                        Button(action: { onDelete(session) }) {
-                            Image(systemName: "trash")
-                                .font(.caption)
-                                .foregroundColor(.red)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-
-                // Last message preview with SessionManager context
-                if let lastMessage = session.messages.last {
-                    HStack {
-                        Text(lastMessage.content)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        if isSessionManagerSession {
-                            Spacer()
-                            Text("✓ Context")
-                                .font(.system(size: 9))
-                                .foregroundColor(.green)
-                        }
-                    }
-                }
-            }
+            // Liquid Enhanced Session Content
+            liquidSessionContent
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(rowBackgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(rowBorderColor, lineWidth: isSessionManagerSession ? 1 : 0)
+        .background(liquidRowBackground)
+        .overlay(liquidRowOverlay)
+        .scaleEffect(liquidScale)
+        .shadow(
+            color: liquidSelectionColor.opacity(liquidGlow * 0.4),
+            radius: 15 * liquidGlow,
+            x: 0,
+            y: 8 * liquidGlow
         )
         .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect(session)
+        .liquidRippleOverlay(
+            accessibilityManager: accessibilityManager,
+            performanceMonitor: performanceMonitor,
+            maxRipples: 1
+        )
+        .onTapGesture { location in
+            performLiquidSelection(at: location)
+        }
+        .onPressureTouch { location, pressure in
+            handlePressureSelection(at: location, pressure: pressure)
+        }
+        .onAppear {
+            setupLiquidRow()
+        }
+        .onChange(of: isSelected) { _, newValue in
+            animateSelectionState(newValue)
+        }
+        .onChange(of: reduceTransparency) { _, newValue in
+            updateAccessibilitySettings()
+        }
+        .onChange(of: reduceMotion) { _, newValue in
+            updateAccessibilitySettings()
         }
     }
+
+    // MARK: - Liquid Enhanced Components
+
+    private var liquidStatusIndicator: some View {
+        VStack(spacing: 2) {
+            Circle()
+                .fill(liquidStatusColor)
+                .frame(width: 8, height: 8)
+                .scaleEffect(isPressed ? 1.2 : 1.0)
+                .liquidAnimation(.bubble, value: isPressed, accessibilityManager: accessibilityManager)
+
+            // Enhanced SessionManager indicator with liquid effect
+            if isSessionManagerSession {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 6))
+                    .foregroundColor(.orange)
+                    .opacity(flowingHighlight ? 1.0 : 0.7)
+                    .liquidAnimation(.flow, value: flowingHighlight, accessibilityManager: accessibilityManager)
+            }
+        }
+    }
+
+    private var liquidSessionContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Session Header with Liquid Enhancement
+            HStack {
+                Text(session.sessionName ?? "Untitled")
+                    .font(.body)
+                    .fontWeight(isSelected ? .semibold : .medium)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                // Enhanced instant switching indicator
+                if isSessionManagerSession {
+                    Image(systemName: "speedometer")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                        .opacity(flowingHighlight ? 1.0 : 0.8)
+                        .liquidAnimation(.response, value: flowingHighlight, accessibilityManager: accessibilityManager)
+                }
+
+                Spacer()
+
+                Text(formatRelativeTime(session.updatedAt))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            // Session Metadata with Liquid Enhancement
+            HStack {
+                Text("\(session.messageCount)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                Text("messages")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                // Enhanced SessionManager session type indicator
+                if isSessionManagerSession {
+                    Text("• Persistent")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                        .opacity(flowingHighlight ? 1.0 : 0.7)
+                }
+
+                Spacer()
+
+                // Liquid Enhanced Delete Button
+                if isSelected {
+                    liquidDeleteButton
+                }
+            }
+
+            // Enhanced Last Message Preview
+            if let lastMessage = session.messages.last {
+                HStack {
+                    Text(lastMessage.content)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if isSessionManagerSession {
+                        Spacer()
+                        Text("✓ Context")
+                            .font(.system(size: 9))
+                            .foregroundColor(.green)
+                            .opacity(flowingHighlight ? 1.0 : 0.8)
+                    }
+                }
+            }
+        }
+    }
+
+    private var liquidDeleteButton: some View {
+        Button(action: { onDelete(session) }) {
+            Image(systemName: "trash")
+                .font(.caption)
+                .foregroundColor(.red)
+                .scaleEffect(isPressed ? 0.9 : 1.0)
+                .liquidAnimation(.feedback, value: isPressed, accessibilityManager: accessibilityManager)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var liquidRowBackground: some View {
+        Group {
+            if accessibilityManager.shouldUseSolidBackgrounds {
+                // Accessibility: Solid background
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(solidRowBackgroundColor)
+                    .opacity(accessibilityManager.getAccessibilityOpacity(baseOpacity: 0.9))
+            } else if performanceMonitor.liquidEffectsEnabled {
+                // Liquid Glass Background
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.clear)
+                        .background(.ultraThinMaterial)
+                        .glassEffect(accessibilityManager.getGlassEffect())
+
+                    // Flowing selection highlight
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        liquidSelectionColor.opacity(selectionProgress * 0.3),
+                                        liquidSelectionColor.opacity(selectionProgress * 0.1),
+                                        Color.clear
+                                    ],
+                                    startPoint: flowingHighlight ? .topLeading : .bottomLeading,
+                                    endPoint: flowingHighlight ? .bottomTrailing : .topTrailing
+                                )
+                            )
+                            .liquidAnimation(.flow, value: flowingHighlight, accessibilityManager: accessibilityManager)
+                    }
+
+                    // Pressure response overlay
+                    if isPressed {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(liquidSelectionColor.opacity(0.1))
+                            .liquidAnimation(.feedback, value: isPressed, accessibilityManager: accessibilityManager)
+                    }
+                }
+            } else {
+                // Fallback background
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(solidRowBackgroundColor)
+            }
+        }
+    }
+
+    private var liquidRowOverlay: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .stroke(liquidBorderColor, lineWidth: liquidBorderWidth)
+            .liquidAnimation(.transition, value: isSelected, accessibilityManager: accessibilityManager)
+    }
+
+    // MARK: - Liquid Interaction Methods
+
+    private func setupLiquidRow() {
+        // Initialize accessibility manager
+        updateAccessibilitySettings()
+
+        // Start performance monitoring
+        performanceMonitor.startMonitoring()
+
+        // Set initial selection state
+        selectionProgress = isSelected ? 1.0 : 0.0
+
+        // Start flowing animation for selected state
+        if isSelected {
+            startFlowingAnimation()
+        }
+    }
+
+    private func performLiquidSelection(at location: CGPoint) {
+        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
+              performanceMonitor.liquidEffectsEnabled else {
+            // Fallback selection for accessibility
+            onSelect(session)
+            return
+        }
+
+        isPressed = true
+
+        // Trigger liquid ripple
+        LiquidRippleEffect.triggerRipple(at: location, pressure: 1.0)
+
+        // Liquid selection animation
+        if let animation = Animation.liquid(.response, accessibilityManager: accessibilityManager) {
+            withAnimation(animation) {
+                liquidScale = 0.98
+                liquidGlow = 0.8
+            }
+
+            withAnimation(animation.delay(0.1)) {
+                liquidScale = 1.0
+                liquidGlow = 0.0
+                isPressed = false
+            }
+        }
+
+        // Perform selection
+        onSelect(session)
+
+        // Record interaction metrics
+        let metrics = LiquidInteractionMetrics(
+            touchLocation: location,
+            pressure: 1.0,
+            elementType: .sessionRow,
+            deviceCapabilities: DeviceCapabilities.current
+        )
+        performanceMonitor.recordInteraction(metrics)
+    }
+
+    private func handlePressureSelection(at location: CGPoint, pressure: Float) {
+        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
+              performanceMonitor.liquidEffectsEnabled else {
+            return
+        }
+
+        // Enhanced pressure feedback
+        if pressure > 1.3 {
+            LiquidRippleEffect.triggerRipple(at: location, pressure: pressure)
+
+            if let animation = Animation.liquid(.feedback, accessibilityManager: accessibilityManager) {
+                withAnimation(animation) {
+                    liquidScale = 0.95 + CGFloat(pressure - 1.0) * 0.05
+                    liquidGlow = Double(pressure - 1.0) * 0.3
+                }
+            }
+        }
+
+        // Record pressure interaction
+        let metrics = LiquidInteractionMetrics(
+            touchLocation: location,
+            pressure: pressure,
+            elementType: .sessionRow,
+            deviceCapabilities: DeviceCapabilities.current
+        )
+        performanceMonitor.recordInteraction(metrics)
+    }
+
+    private func animateSelectionState(_ selected: Bool) {
+        guard accessibilityManager.shouldEnableFeature(.interactiveEffects) else {
+            selectionProgress = selected ? 1.0 : 0.0
+            return
+        }
+
+        let targetProgress = selected ? 1.0 : 0.0
+
+        if let animation = Animation.liquid(.transition, accessibilityManager: accessibilityManager) {
+            withAnimation(animation) {
+                selectionProgress = targetProgress
+                liquidGlow = selected ? 0.6 : 0.0
+            }
+        }
+
+        if selected {
+            startFlowingAnimation()
+        } else {
+            stopFlowingAnimation()
+        }
+    }
+
+    private func startFlowingAnimation() {
+        guard accessibilityManager.shouldEnableFeature(.spatialEffects) else { return }
+
+        flowingHighlight = true
+
+        if let animation = Animation.liquid(.flow, accessibilityManager: accessibilityManager) {
+            withAnimation(animation.repeatForever(autoreverses: true)) {
+                flowingHighlight.toggle()
+            }
+        }
+    }
+
+    private func stopFlowingAnimation() {
+        flowingHighlight = false
+    }
+
+    private func updateAccessibilitySettings() {
+        accessibilityManager.updateFromEnvironment(
+            reduceTransparency: reduceTransparency,
+            reduceMotion: reduceMotion,
+            dynamicTypeSize: .large
+        )
+    }
+
+    // MARK: - Liquid Computed Properties
+
+    private var liquidStatusColor: Color {
+        let baseColor = statusColor
+
+        if isSelected && accessibilityManager.shouldEnableFeature(.interactiveEffects) {
+            return baseColor.opacity(0.9 + selectionProgress * 0.1)
+        } else {
+            return baseColor
+        }
+    }
+
+    private var liquidSelectionColor: Color {
+        if isSessionManagerSession {
+            return .orange
+        } else {
+            return .blue
+        }
+    }
+
+    private var liquidBorderColor: Color {
+        if isSelected {
+            let baseColor = liquidSelectionColor
+            return baseColor.opacity(0.4 + selectionProgress * 0.2)
+        } else {
+            return Color.clear
+        }
+    }
+
+    private var liquidBorderWidth: CGFloat {
+        if isSelected {
+            return 1.0 + selectionProgress * 0.5
+        } else {
+            return 0.0
+        }
+    }
+
+    private var solidRowBackgroundColor: Color {
+        if isSelected {
+            return liquidSelectionColor.opacity(0.15)
+        } else {
+            return Color.clear
+        }
+    }
+
+    // MARK: - Legacy Computed Properties
 
     private var statusColor: Color {
         switch session.status {

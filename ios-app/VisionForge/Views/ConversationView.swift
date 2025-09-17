@@ -371,41 +371,6 @@ struct ConversationView: View {
     }
 }
 
-// MARK: - Liquid Glass Container
-
-struct LiquidGlassContainer<Content: View>: View {
-    let content: Content
-    
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-    
-    var body: some View {
-        ZStack {
-            // Background with liquid glass effect
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color.blue.opacity(0.1),
-                    Color.purple.opacity(0.05),
-                    Color.clear
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-            
-            // Content with glass material background
-            content
-                .background(
-                    .ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: 0)
-                )
-        }
-        // Note: iOS 26+ liquid glass APIs are speculative
-        // Using standard SwiftUI visual effects as fallback
-        .background(Color(.systemBackground).opacity(0.9))
-    }
-}
 
 // MARK: - Preview
 

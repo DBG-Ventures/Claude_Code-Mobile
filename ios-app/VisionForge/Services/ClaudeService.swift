@@ -30,7 +30,7 @@ protocol ClaudeServiceProtocol: ObservableObject {
 
     // Connection management
     func connect() async throws
-    func disconnect()
+    func disconnect() async
     func checkHealth() async throws -> Bool
 }
 
@@ -200,7 +200,7 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
         }
     }
 
-    func disconnect() {
+    func disconnect() async {
         isConnected = false
         connectionStatus = .disconnected
         endBackgroundTask()

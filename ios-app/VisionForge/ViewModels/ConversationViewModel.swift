@@ -756,8 +756,30 @@ class ConversationViewModel: ObservableObject {
                             self.handleStreamingError(errorMessage)
                         }
 
-                    default:
-                        break
+                    case .assistant, .thinking, .tool, .system:
+                        // Flush buffer before adding special message
+                        await MainActor.run {
+                            if !self.messageBuffer.isEmpty {
+                                self.flushBuffer(messageId: messageId, sessionId: sessionId, accumulatedContent: accumulatedContent)
+                            }
+
+                            // Create separate message bubbles for each thinking step/tool usage
+                            if let content = chunk.content, !content.isEmpty {
+                                let stepMessageId = UUID().uuidString
+                                let stepMessage = ClaudeMessage(
+                                    id: stepMessageId,
+                                    content: content,
+                                    role: .assistant,
+                                    timestamp: Date(),
+                                    sessionId: sessionId,
+                                    metadata: [
+                                        "chunk_type": .string(chunk.chunkType.rawValue),
+                                        "is_thinking_step": .bool(true)
+                                    ]
+                                )
+                                self.messages.append(stepMessage)
+                            }
+                        }
                     }
                 }
 

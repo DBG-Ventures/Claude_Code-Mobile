@@ -9,13 +9,31 @@
 import SwiftUI
 
 struct MessageBubble: View {
-    
+
     // MARK: - Properties
-    
+
     let message: ClaudeMessage
     let isStreaming: Bool
-    
+
     @State private var animateInsertion: Bool = false
+
+    // MARK: - Liquid Glass Enhancement State
+
+    @State private var liquidScale: CGFloat = 1.0
+    @State private var liquidGlow: Double = 0.0
+    @State private var contentPressure: CGFloat = 0.0
+    @State private var isPressed: Bool = false
+    @State private var touchLocation: CGPoint = .zero
+
+    // MARK: - System Integration
+
+    @EnvironmentObject private var accessibilityManager: AccessibilityManager
+    @EnvironmentObject private var performanceMonitor: LiquidPerformanceMonitor
+
+    // MARK: - Environment
+
+    @Environment(\.accessibilityReduceTransparency) var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
     
     // MARK: - Body
     
@@ -24,35 +42,71 @@ struct MessageBubble: View {
             if message.role == .user {
                 Spacer(minLength: 50)
             }
-            
+
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
-                // Message Content
-                messageContent
-                
+                // Message Content with Liquid Enhancement
+                liquidEnhancedMessageContent
+
                 // Message Metadata
                 messageMetadata
             }
-            
+
             if message.role == .assistant {
                 Spacer(minLength: 50)
             }
         }
         .scaleEffect(animateInsertion ? 1.0 : 0.95)
         .opacity(animateInsertion ? 1.0 : 0.0)
+        .scaleEffect(liquidScale) // Liquid scale effect
+        .shadow(
+            color: bubbleColor.opacity(liquidGlow * 0.3),
+            radius: 20 * liquidGlow,
+            x: 0,
+            y: 10 * liquidGlow
+        ) // Liquid glow effect
+        .liquidRippleOverlay(
+            accessibilityManager: accessibilityManager,
+            performanceMonitor: performanceMonitor,
+            maxRipples: 2
+        )
         .onAppear {
-            withAnimation(.easeOut(duration: 0.3)) {
-                animateInsertion = true
-            }
+            setupLiquidBubble()
+        }
+        .onChange(of: reduceTransparency) { _, newValue in
+            accessibilityManager.updateFromEnvironment(
+                reduceTransparency: newValue,
+                reduceMotion: reduceMotion,
+                dynamicTypeSize: .large
+            )
+        }
+        .onChange(of: reduceMotion) { _, newValue in
+            accessibilityManager.updateFromEnvironment(
+                reduceTransparency: reduceTransparency,
+                reduceMotion: newValue,
+                dynamicTypeSize: .large
+            )
         }
     }
     
-    // MARK: - Message Content
-    
+    // MARK: - Liquid Enhanced Message Content
+
+    private var liquidEnhancedMessageContent: some View {
+        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 0) {
+            // Role Avatar with Liquid Enhancement
+            liquidEnhancedRoleAvatar
+
+            // Liquid Message Bubble
+            liquidMessageBubble
+        }
+    }
+
+    // MARK: - Message Content (Legacy)
+
     private var messageContent: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 0) {
             // Role Avatar
             roleAvatar
-            
+
             // Message Bubble
             messageBubble
         }
@@ -135,8 +189,198 @@ struct MessageBubble: View {
         }
         .padding(.horizontal, 4)
     }
-    
+
+    // MARK: - Liquid Enhanced Components
+
+    private var liquidEnhancedRoleAvatar: some View {
+        HStack {
+            if message.role == .user {
+                Spacer()
+            }
+
+            Circle()
+                .fill(liquidAvatarColor)
+                .frame(width: 32, height: 32)
+                .overlay {
+                    Image(systemName: avatarIcon)
+                        .foregroundColor(.white)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .scaleEffect(isPressed ? 0.95 : 1.0)
+                .liquidAnimation(.bubble, value: isPressed, accessibilityManager: accessibilityManager)
+
+            if message.role == .assistant {
+                Spacer()
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private var liquidMessageBubble: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isStreaming {
+                StreamingText(content: message.content)
+                    .padding(.horizontal, bubblePadding.horizontal)
+                    .padding(.vertical, bubblePadding.vertical)
+            } else {
+                Text(message.content)
+                    .font(messageFont)
+                    .foregroundColor(messageForegroundColor)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, bubblePadding.horizontal)
+                    .padding(.vertical, bubblePadding.vertical)
+            }
+        }
+        .background(
+            liquidBubbleBackground
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                .stroke(bubbleBorderColor, lineWidth: 0.5)
+        )
+        .onTapGesture { location in
+            performLiquidInteraction(at: location)
+        }
+        .onPressureTouch { location, pressure in
+            handlePressureTouch(at: location, pressure: pressure)
+        }
+    }
+
+    private var liquidBubbleBackground: some View {
+        Group {
+            if accessibilityManager.shouldUseSolidBackgrounds {
+                // Accessibility: Solid background
+                RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                    .fill(bubbleColor)
+                    .opacity(accessibilityManager.getAccessibilityOpacity(baseOpacity: 0.9))
+            } else if performanceMonitor.liquidEffectsEnabled {
+                // Liquid glass background
+                RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                    .fill(.clear)
+                    .background(message.role == .user ? .regularMaterial : .ultraThinMaterial)
+                    .glassEffect(accessibilityManager.getGlassEffect())
+                    .overlay(
+                        // Enhanced color overlay for better contrast
+                        RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                            .fill(bubbleColor.opacity(message.role == .user ? 0.8 : contentPressure * 0.2))
+                    )
+            } else {
+                // Fallback background
+                RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                    .fill(bubbleColor)
+            }
+        }
+        .shadow(color: .black.opacity(bubbleShadowOpacity), radius: 2, x: 0, y: 1)
+    }
+
+    // MARK: - Liquid Interaction Methods
+
+    private func setupLiquidBubble() {
+        // Initialize animation with insertion
+        withAnimation(.easeOut(duration: 0.3)) {
+            animateInsertion = true
+        }
+
+        // Update accessibility manager
+        accessibilityManager.updateFromEnvironment(
+            reduceTransparency: reduceTransparency,
+            reduceMotion: reduceMotion,
+            dynamicTypeSize: .large
+        )
+
+        // Start performance monitoring if not already active
+        performanceMonitor.startMonitoring()
+    }
+
+    private func performLiquidInteraction(at location: CGPoint) {
+        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
+              performanceMonitor.liquidEffectsEnabled else {
+            return
+        }
+
+        touchLocation = location
+        isPressed = true
+
+        // Trigger liquid ripple
+        LiquidRippleEffect.triggerRipple(at: location, pressure: 1.0)
+
+        // Liquid bubble animation sequence
+        if let animation = Animation.liquid(.bubble, accessibilityManager: accessibilityManager) {
+            withAnimation(animation) {
+                liquidScale = 0.98
+                liquidGlow = 1.0
+            }
+
+            withAnimation(animation.delay(0.1)) {
+                liquidScale = 1.02
+                liquidGlow = 0.5
+            }
+
+            withAnimation(animation.delay(0.2)) {
+                liquidScale = 1.0
+                liquidGlow = 0.0
+                isPressed = false
+            }
+        } else {
+            // Immediate for accessibility
+            liquidScale = 1.0
+            liquidGlow = 0.0
+            isPressed = false
+        }
+
+        // Record interaction metrics
+        let metrics = LiquidInteractionMetrics(
+            touchLocation: location,
+            pressure: 1.0,
+            elementType: .messageBubble,
+            deviceCapabilities: DeviceCapabilities.current
+        )
+        performanceMonitor.recordInteraction(metrics)
+    }
+
+    private func handlePressureTouch(at location: CGPoint, pressure: Float) {
+        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
+              performanceMonitor.liquidEffectsEnabled else {
+            return
+        }
+
+        contentPressure = CGFloat(min(pressure, 2.0))
+        touchLocation = location
+
+        // Enhanced interaction for high pressure
+        if pressure > 1.5 {
+            LiquidRippleEffect.triggerRipple(at: location, pressure: pressure)
+
+            // Intense pressure feedback
+            if let animation = Animation.liquid(.feedback, accessibilityManager: accessibilityManager) {
+                withAnimation(animation) {
+                    liquidScale = 0.95 + CGFloat(pressure - 1.0) * 0.1
+                    liquidGlow = Double(pressure - 1.0) * 0.5
+                }
+            }
+        }
+
+        // Record pressure interaction
+        let metrics = LiquidInteractionMetrics(
+            touchLocation: location,
+            pressure: pressure,
+            elementType: .messageBubble,
+            deviceCapabilities: DeviceCapabilities.current
+        )
+        performanceMonitor.recordInteraction(metrics)
+    }
+
     // MARK: - Computed Properties
+
+    private var liquidAvatarColor: Color {
+        let baseColor = avatarColor
+
+        if isPressed && accessibilityManager.shouldEnableFeature(.interactiveEffects) {
+            return baseColor.opacity(0.8)
+        } else {
+            return baseColor
+        }
+    }
     
     private var bubbleColor: Color {
         switch message.role {

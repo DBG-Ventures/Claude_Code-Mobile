@@ -10,6 +10,11 @@ import SwiftUI
 @main
 struct VisionForgeApp: App {
     @StateObject private var networkManager: NetworkManager
+    @StateObject private var deviceCapabilities = DeviceCapabilityDetector()
+    @StateObject private var accessibilityManager = AccessibilityManager()
+    @StateObject private var performanceMonitor = LiquidPerformanceMonitor()
+    @StateObject private var sessionPersistenceService = SessionPersistenceService()
+    @StateObject private var sessionStateManager: SessionStateManager
 
     init() {
 
@@ -20,6 +25,16 @@ struct VisionForgeApp: App {
             _networkManager = StateObject(wrappedValue: NetworkManager())
         }
 
+        // Initialize session persistence service
+        let persistenceService = SessionPersistenceService()
+        _sessionPersistenceService = StateObject(wrappedValue: persistenceService)
+
+        // Initialize session state manager with shared persistence service
+        _sessionStateManager = StateObject(wrappedValue: SessionStateManager(
+            claudeService: ClaudeService(baseURL: URL(string: "http://placeholder")!),
+            persistenceService: persistenceService
+        ))
+
         // Migrate any old credentials from UserDefaults
         KeychainManager.shared.migrateFromUserDefaults()
     }
@@ -28,6 +43,11 @@ struct VisionForgeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(networkManager)
+                .environmentObject(deviceCapabilities)
+                .environmentObject(accessibilityManager)
+                .environmentObject(performanceMonitor)
+                .environmentObject(sessionPersistenceService)
+                .environmentObject(sessionStateManager)
                 .onAppear {
                     restoreSessionsOnLaunch()
                 }

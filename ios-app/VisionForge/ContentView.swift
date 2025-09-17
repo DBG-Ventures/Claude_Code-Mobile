@@ -13,9 +13,9 @@ struct ContentView: View {
     // MARK: - State Properties
 
     @EnvironmentObject var networkManager: NetworkManager
+    @EnvironmentObject var sessionPersistenceService: SessionPersistenceService
+    @EnvironmentObject var sessionStateManager: SessionStateManager
     @StateObject private var sessionListViewModel = SessionListViewModel()
-    @StateObject private var sessionStateManager: SessionStateManager
-    @StateObject private var sessionPersistenceService = SessionPersistenceService()
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
@@ -23,19 +23,6 @@ struct ContentView: View {
     @State private var isCreatingSession = false
     @State private var showingNewSessionSheet = false
 
-    // MARK: - Initialization
-
-    init() {
-        // Initialize persistence service first
-        let persistenceService = SessionPersistenceService()
-        _sessionPersistenceService = StateObject(wrappedValue: persistenceService)
-
-        // Create SessionStateManager with placeholder - will be updated via environment
-        _sessionStateManager = StateObject(wrappedValue: SessionStateManager(
-            claudeService: ClaudeService(baseURL: URL(string: "http://placeholder")!),
-            persistenceService: persistenceService
-        ))
-    }
 
     // MARK: - Body
 
