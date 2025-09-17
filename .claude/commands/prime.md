@@ -2,6 +2,8 @@
 
 # Prime Context for Claude Code
 
+Use 6 parralel sub-agents to complete each of the following simultanulously
+
 Use the command `tree` to get an understanding of the project structure.
 
 Start with reading the CLAUDE.md file if it exists to get an understanding of the project.
