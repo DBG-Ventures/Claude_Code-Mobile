@@ -1,3 +1,7 @@
+## Archon Project Info
+Project Name: Claude Code Mobile - SwiftUI Client
+Project ID: bbc62355-c837-4be9-a733-e23ed015ce70
+
 ## Core Development Philosophy
 
 ### KISS (Keep It Simple, Stupid)
