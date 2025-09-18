@@ -14,7 +14,7 @@ Read the main project PRP to get and an understanding of the project goals and c
 
 Read key files in the following directories:
 backend/
-ios-app/VisionForge
+ios-app/VisionForge - MUST USE swift-code-reviewer agent
 
 Explain back to me:
 - Project structure
