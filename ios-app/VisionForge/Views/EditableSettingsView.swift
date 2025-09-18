@@ -11,11 +11,11 @@ import Combine
 
 struct EditableSettingsView: View {
     // MARK: - Environment Objects
-    @EnvironmentObject var networkManager: NetworkManager
+    @Environment(NetworkManager.self) var networkManager
     @Environment(\.presentationMode) var presentationMode
 
     // MARK: - State Properties
-    @StateObject private var validator = ConfigurationValidator()
+    @State private var validator = ConfigurationValidator()
     @State private var workingConfig: BackendConfigBuilder = BackendConfigBuilder()
     @State private var savedConfigurations: [BackendConfig] = []
     @State private var showingDeleteAlert = false

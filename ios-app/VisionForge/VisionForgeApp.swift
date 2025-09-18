@@ -9,27 +9,37 @@ import SwiftUI
 
 @main
 struct VisionForgeApp: App {
-    @StateObject private var networkManager: NetworkManager
-    @StateObject private var sessionPersistenceService = SessionPersistenceService()
-    @StateObject private var sessionStateManager: SessionStateManager
-    @StateObject private var sessionListViewModel = SessionListViewModel()
+    @State private var networkManager: NetworkManager
+    @State private var sessionPersistenceService = SessionPersistenceService()
+    @State private var sessionStateManager: SessionStateManager
+    @State private var sessionListViewModel = SessionListViewModel()
+    @State private var sessionRepository: SessionRepository
 
     init() {
 
         // Initialize network manager with saved configuration if available
         if let savedConfig = BackendConfig.loadFromKeychain() {
-            _networkManager = StateObject(wrappedValue: NetworkManager(config: savedConfig))
+            _networkManager = State(initialValue: NetworkManager(config: savedConfig))
         } else {
-            _networkManager = StateObject(wrappedValue: NetworkManager())
+            _networkManager = State(initialValue: NetworkManager())
         }
 
         // Initialize session persistence service
         let persistenceService = SessionPersistenceService()
-        _sessionPersistenceService = StateObject(wrappedValue: persistenceService)
+        _sessionPersistenceService = State(initialValue: persistenceService)
+
+        // Initialize Claude service
+        let claudeService = ClaudeService(baseURL: URL(string: "http://placeholder")!)
 
         // Initialize session state manager with shared persistence service
-        _sessionStateManager = StateObject(wrappedValue: SessionStateManager(
-            claudeService: ClaudeService(baseURL: URL(string: "http://placeholder")!),
+        _sessionStateManager = State(initialValue: SessionStateManager(
+            claudeService: claudeService,
+            persistenceService: persistenceService
+        ))
+
+        // Initialize repository for unified session management
+        _sessionRepository = State(initialValue: SessionRepository(
+            claudeService: claudeService,
             persistenceService: persistenceService
         ))
 
@@ -40,10 +50,11 @@ struct VisionForgeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(networkManager)
-                .environmentObject(sessionPersistenceService)
-                .environmentObject(sessionStateManager)
-                .environmentObject(sessionListViewModel)
+                .environment(networkManager)
+                .environment(sessionPersistenceService)
+                .environment(sessionStateManager)
+                .environment(sessionListViewModel)
+                .environment(sessionRepository)
                 .onAppear {
                     restoreSessionsOnLaunch()
                 }

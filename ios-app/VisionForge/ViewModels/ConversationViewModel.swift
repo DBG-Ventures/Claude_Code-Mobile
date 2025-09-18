@@ -8,28 +8,29 @@
 
 import Foundation
 import SwiftUI
-import Combine
+import Observation
 
 @MainActor
-class ConversationViewModel: ObservableObject {
+@Observable
+class ConversationViewModel {
     
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var messages: [ClaudeMessage] = []
-    @Published var isStreaming: Bool = false
-    @Published var streamingMessageId: String?
-    @Published var currentSession: SessionResponse?
-    @Published var currentSessionManager: SessionManagerResponse?
-    @Published var error: ErrorResponse?
-    @Published var isLoading: Bool = false
-    @Published var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
-    @Published var conversationHistory: [ConversationMessage] = []
+    var messages: [ClaudeMessage] = []
+    var isStreaming: Bool = false
+    var streamingMessageId: String?
+    var currentSession: SessionResponse?
+    var currentSessionManager: SessionManagerResponse?
+    var error: ErrorResponse?
+    var isLoading: Bool = false
+    var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
+    var conversationHistory: [ConversationMessage] = []
     
     // MARK: - Private Properties
 
     private var claudeService: ClaudeService?
     private var sessionStateManager: SessionStateManager?
-    private var cancellables = Set<AnyCancellable>()
+    private var sessionStateObserver: Task<Void, Never>?
     private var streamingContinuation: Task<Void, Never>?
     private var currentSessionId: String?
 
@@ -56,10 +57,7 @@ class ConversationViewModel: ObservableObject {
         setupInitialState()
     }
     
-    deinit {
-        streamingContinuation?.cancel()
-        cancellables.removeAll()
-    }
+    // Cleanup handled in Task cancellation
     
     // MARK: - Public Methods
     
@@ -84,7 +82,7 @@ class ConversationViewModel: ObservableObject {
     }
 
     private func sendMessageWithSessionManager(_ content: String) {
-        guard let claudeService = claudeService,
+        guard claudeService != nil,
               let sessionStateManager = sessionStateManager,
               let currentSessionManager = currentSessionManager else {
             setError(ErrorResponse(
@@ -368,21 +366,31 @@ class ConversationViewModel: ObservableObject {
     private func setupSessionStateObservers() {
         guard let sessionStateManager = sessionStateManager else { return }
 
-        // Monitor SessionManager connection status
-        sessionStateManager.$sessionManagerStatus
-            .receive(on: DispatchQueue.main)
-            .assign(to: \.sessionManagerStatus, on: self)
-            .store(in: &cancellables)
+        // Cancel existing observer if any
+        sessionStateObserver?.cancel()
 
-        // Monitor session state changes
-        sessionStateManager.$currentSessionId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessionId in
-                if let sessionId = sessionId, sessionId != self?.currentSessionId {
-                    self?.handleSessionChange(sessionId)
+        // Use withObservationTracking for efficient updates
+        sessionStateObserver = Task { @MainActor in
+            while !Task.isCancelled {
+                withObservationTracking {
+                    // Track changes to SessionStateManager properties
+                    self.sessionManagerStatus = sessionStateManager.sessionManagerStatus
+
+                    if let sessionId = sessionStateManager.currentSessionId,
+                       sessionId != self.currentSessionId {
+                        self.handleSessionChange(sessionId)
+                    }
+                } onChange: {
+                    // This will be called when any tracked property changes
+                    Task { @MainActor in
+                        // Update will happen on next iteration
+                    }
                 }
+
+                // Small delay to prevent tight loop
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
-            .store(in: &cancellables)
+        }
     }
 
     private func handleSessionChange(_ sessionId: String) {

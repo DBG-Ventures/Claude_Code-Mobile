@@ -15,11 +15,11 @@ struct BackendSetupFlow: View {
 
     // MARK: - Environment Objects
 
-    @EnvironmentObject var networkManager: NetworkManager
+    @Environment(NetworkManager.self) var networkManager
 
     // MARK: - State Properties
 
-    @StateObject private var validator = ConfigurationValidator()
+    @State private var validator = ConfigurationValidator()
     @State private var currentStep: SetupStep = .welcome
     @State private var configuration = BackendConfigBuilder()
     @State private var isCompleting = false
@@ -946,5 +946,5 @@ extension BackendSetupFlow {
 
 #Preview {
     BackendSetupFlow()
-        .environmentObject(NetworkManager())
+        .environment(NetworkManager())
 }

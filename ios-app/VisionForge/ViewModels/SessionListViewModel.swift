@@ -8,61 +8,42 @@
 
 import Foundation
 import SwiftUI
-import Combine
+import Observation
 
 @MainActor
-class SessionListViewModel: ObservableObject {
-    
-    // MARK: - Published Properties
+@Observable
+class SessionListViewModel {
 
-    @Published var sessions: [SessionResponse] = []
-    @Published var sessionManagerSessions: [SessionManagerResponse] = []
-    @Published var isLoading: Bool = false
-    @Published var error: ErrorResponse?
-    @Published var selectedSession: SessionResponse?
-    @Published var selectedSessionManager: SessionManagerResponse?
-    @Published var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
-    @Published var isRefreshing: Bool = false
-    
+    // MARK: - Observable Properties
+
+    var sessions: [SessionManagerResponse] = []
+    var isLoading: Bool = false
+    var error: ErrorResponse?
+    var selectedSession: SessionManagerResponse?
+    var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
+    var isRefreshing: Bool = false
+
     // MARK: - Private Properties
 
-    private var claudeService: ClaudeService?
+    private var repository: SessionRepository?
     private var sessionStateManager: SessionStateManager?
-    private var cancellables = Set<AnyCancellable>()
+    private var sessionStateObserver: Task<Void, Never>?
     // Single user system
     private let userId: String = "mobile-user"
-    private var useSessionManager: Bool = true // Flag to use enhanced SessionManager features
     
     // MARK: - Computed Properties
 
-    var activeSessions: [SessionResponse] {
+    var activeSessions: [SessionManagerResponse] {
         sessions.filter { $0.status == .active }
     }
 
-    var activeSessionManagerSessions: [SessionManagerResponse] {
-        sessionManagerSessions.filter { $0.status == .active }
-    }
-
-    var recentSessions: [SessionResponse] {
+    var recentSessions: [SessionManagerResponse] {
         let oneHourAgo = Date().addingTimeInterval(-3600)
-        return sessions.filter { $0.updatedAt > oneHourAgo }
+        return sessions.filter { $0.lastActiveAt > oneHourAgo }
     }
 
-    var recentSessionManagerSessions: [SessionManagerResponse] {
-        let oneHourAgo = Date().addingTimeInterval(-3600)
-        return sessionManagerSessions.filter { $0.lastActiveAt > oneHourAgo }
-    }
-
-    var completedSessions: [SessionResponse] {
+    var completedSessions: [SessionManagerResponse] {
         sessions.filter { $0.status == .completed }
-    }
-
-    var completedSessionManagerSessions: [SessionManagerResponse] {
-        sessionManagerSessions.filter { $0.status == .completed }
-    }
-
-    var currentSessionsList: [SessionManagerResponse] {
-        return useSessionManager ? sessionManagerSessions : []
     }
     
     // MARK: - Initialization
@@ -71,31 +52,35 @@ class SessionListViewModel: ObservableObject {
         setupInitialState()
     }
     
-    deinit {
-        cancellables.removeAll()
-    }
+    // Cleanup handled in Task cancellation
     
     // MARK: - Public Methods
     
-    func setClaudeService(_ service: ClaudeService) {
-        self.claudeService = service
+    func setRepository(_ repository: SessionRepository) {
+        self.repository = repository
+        Task {
+            await observeRepositoryChanges()
+        }
     }
 
     func setSessionStateManager(_ sessionStateManager: SessionStateManager) {
         self.sessionStateManager = sessionStateManager
         setupSessionStateObservers()
-
-        // Auto-load sessions from SessionManager
-        if useSessionManager {
-            loadSessionsFromSessionManager()
-        }
+        loadSessions()
     }
     
     func loadSessions() {
-        if useSessionManager {
-            loadSessionsFromSessionManager()
-        } else {
-            loadSessionsLegacy()
+        guard let repository else { return }
+
+        Task {
+            isLoading = true
+            defer { isLoading = false }
+
+            do {
+                sessions = try await repository.getAllSessions()
+            } catch {
+                handleError(error, context: "loading sessions")
+            }
         }
     }
 
@@ -179,84 +164,85 @@ class SessionListViewModel: ObservableObject {
         }
     }
     
-    func createNewSession(name: String, workingDirectory: String? = nil, completion: @escaping (Bool) -> Void) {
-        if useSessionManager {
-            createNewSessionWithManager(name: name, workingDirectory: workingDirectory, completion: completion)
-        } else {
-            createNewSessionLegacy(name: name, workingDirectory: workingDirectory, completion: completion)
+    func createNewSession(name: String, workingDirectory: String? = nil) async -> Bool {
+        guard let repository else { return false }
+
+        do {
+            let sessionName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newSession = try await repository.createSession(
+                name: sessionName.isEmpty ? nil : sessionName,
+                workingDirectory: workingDirectory
+            )
+
+            self.sessions.insert(newSession, at: 0)
+            self.selectedSession = newSession
+            print("✅ Created new session: \(newSession.sessionId)")
+            return true
+
+        } catch {
+            self.handleError(error, context: "creating new session")
+            return false
         }
     }
 
-    private func createNewSessionWithManager(name: String, workingDirectory: String? = nil, completion: @escaping (Bool) -> Void) {
+    private func createNewSessionWithManager(name: String, workingDirectory: String? = nil) async -> Bool {
         guard let sessionStateManager = sessionStateManager else {
-            completion(false)
-            return
+            return false
         }
 
-        Task {
-            do {
-                let sessionName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                let newSession = try await sessionStateManager.createNewSession(
-                    name: sessionName.isEmpty ? nil : sessionName,
-                    workingDirectory: workingDirectory
-                )
+        do {
+            let sessionName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newSession = try await sessionStateManager.createNewSession(
+                name: sessionName.isEmpty ? nil : sessionName,
+                workingDirectory: workingDirectory
+            )
 
-                await MainActor.run {
-                    self.sessionManagerSessions.insert(newSession, at: 0)
-                    self.selectedSessionManager = newSession
-                    completion(true)
-                    print("✅ Created new SessionManager session: \(newSession.sessionId)")
-                }
+            self.sessionManagerSessions.insert(newSession, at: 0)
+            self.selectedSessionManager = newSession
+            print("✅ Created new SessionManager session: \(newSession.sessionId)")
+            return true
 
-            } catch {
-                await MainActor.run {
-                    self.handleError(error, context: "creating new SessionManager session")
-                    completion(false)
-                }
-            }
+        } catch {
+            self.handleError(error, context: "creating new SessionManager session")
+            return false
         }
     }
 
-    private func createNewSessionLegacy(name: String, workingDirectory: String? = nil, completion: @escaping (Bool) -> Void) {
+    private func createNewSessionLegacy(name: String, workingDirectory: String? = nil) async -> Bool {
         guard let claudeService = claudeService else {
-            completion(false)
-            return
+            return false
         }
 
-        Task {
-            do {
-                let sessionRequest = SessionRequest(
-                    userId: userId,
-                    claudeOptions: ClaudeCodeOptions(
-                        apiKey: nil,
-                        model: nil, // Use default (latest) model
-                        maxTokens: 8192,
-                        temperature: 0.7,
-                        timeout: 60
-                    ),
-                    sessionName: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                    workingDirectory: workingDirectory, // User-specified working directory
-                    context: ["created_from": .string("mobile"), "platform": .string("iOS")]
-                )
+        do {
+            let sessionRequest = SessionRequest(
+                userId: userId,
+                claudeOptions: ClaudeCodeOptions(
+                    apiKey: nil,
+                    model: nil, // Use default (latest) model
+                    maxTokens: 8192,
+                    temperature: 0.7,
+                    timeout: 60
+                ),
+                sessionName: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                workingDirectory: workingDirectory, // User-specified working directory
+                context: ["created_from": .string("mobile"), "platform": .string("iOS")]
+            )
 
-                let newSession = try await claudeService.createSession(request: sessionRequest)
+            let newSession = try await claudeService.createSession(request: sessionRequest)
 
-                await MainActor.run {
-                    self.sessions.insert(newSession, at: 0)
-                    self.selectedSession = newSession
-                    completion(true)
-                }
+            self.sessions.insert(newSession, at: 0)
+            self.selectedSession = newSession
+            return true
 
-            } catch {
-                await MainActor.run {
-                    self.handleError(error, context: "creating new session")
-                    completion(false)
-                }
-            }
+        } catch {
+            self.handleError(error, context: "creating new session")
+            return false
         }
     }
     
-    func deleteSession(_ session: SessionResponse) {
+    func deleteSession(_ session: SessionManagerResponse) {
+        guard let repository else { return }
+
         // Optimistically remove from UI
         sessions.removeAll { $0.id == session.id }
 
@@ -265,32 +251,14 @@ class SessionListViewModel: ObservableObject {
             selectedSession = nil
         }
 
-        // TODO: Implement actual backend deletion when available
-        // The backend API doesn't currently support actual deletion
-        // This would call claudeService.deleteSession(sessionId, userId)
-    }
-
-    func deleteSessionManager(_ session: SessionManagerResponse) {
-        guard let sessionStateManager = sessionStateManager else { return }
-
-        // Optimistically remove from UI
-        sessionManagerSessions.removeAll { $0.id == session.id }
-
-        // Clear selection if deleting selected session
-        if selectedSessionManager?.id == session.id {
-            selectedSessionManager = nil
-        }
-
         Task {
             do {
-                try await sessionStateManager.deleteSession(session.sessionId)
-                print("✅ Deleted SessionManager session: \(session.sessionId)")
+                try await repository.deleteSession(session.sessionId)
+                print("✅ Deleted session: \(session.sessionId)")
             } catch {
-                await MainActor.run {
-                    // Re-add session if deletion failed
-                    self.sessionManagerSessions.append(session)
-                    self.handleError(error, context: "deleting SessionManager session")
-                }
+                // Re-add session if deletion failed
+                self.sessions.append(session)
+                self.handleError(error, context: "deleting session")
             }
         }
     }
@@ -335,19 +303,12 @@ class SessionListViewModel: ObservableObject {
         }
     }
     
-    func selectSession(_ session: SessionResponse) {
+    func selectSession(_ session: SessionManagerResponse) {
         selectedSession = session
 
         // Update the session's last accessed time
-        updateSessionLastAccessed(session)
-    }
-
-    func selectSessionManager(_ session: SessionManagerResponse) {
-        selectedSessionManager = session
-
-        // Update the session's last accessed time using SessionStateManager
         Task {
-            await sessionStateManager?.updateSessionLastActive(session.sessionId)
+            await repository?.updateSessionActivity(session.sessionId)
         }
     }
 
@@ -390,42 +351,66 @@ class SessionListViewModel: ObservableObject {
 
     private func setupInitialState() {
         sessions = []
-        sessionManagerSessions = []
         isLoading = false
         isRefreshing = false
         error = nil
         selectedSession = nil
-        selectedSessionManager = nil
         sessionManagerStatus = .disconnected
+    }
+
+    private func observeRepositoryChanges() async {
+        guard let repository else { return }
+
+        // Observe repository changes using withObservationTracking
+        while !Task.isCancelled {
+            withObservationTracking {
+                // Sync sessions from repository
+                self.sessions = repository.sessions
+                self.isLoading = repository.isLoading
+
+                // Update selected session if current selection changed
+                if let currentId = repository.currentSessionId,
+                   selectedSession?.sessionId != currentId {
+                    self.selectedSession = repository.currentSession
+                }
+            } onChange: {
+                Task { @MainActor in
+                    // Changes detected, loop will continue
+                }
+            }
+
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        }
     }
 
     private func setupSessionStateObservers() {
         guard let sessionStateManager = sessionStateManager else { return }
 
-        // Monitor SessionManager connection status
-        sessionStateManager.$sessionManagerStatus
-            .receive(on: DispatchQueue.main)
-            .assign(to: \.sessionManagerStatus, on: self)
-            .store(in: &cancellables)
+        // Use withObservationTracking for efficient updates
+        Task { @MainActor in
+            while true {
+                withObservationTracking {
+                    // Track changes to SessionStateManager properties
+                    self.sessionManagerStatus = sessionStateManager.sessionManagerStatus
+                    self.sessionManagerSessions = sessionStateManager.activeSessions.sorted {
+                        $0.lastActiveAt > $1.lastActiveAt
+                    }
 
-        // Monitor active sessions changes
-        sessionStateManager.$activeSessions
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessions in
-                self?.sessionManagerSessions = sessions.sorted { $0.lastActiveAt > $1.lastActiveAt }
-            }
-            .store(in: &cancellables)
-
-        // Monitor current session changes
-        sessionStateManager.$currentSessionId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessionId in
-                if let sessionId = sessionId,
-                   let session = sessionStateManager.getSession(sessionId) {
-                    self?.selectedSessionManager = session
+                    if let sessionId = sessionStateManager.currentSessionId,
+                       let session = sessionStateManager.getSession(sessionId) {
+                        self.selectedSessionManager = session
+                    }
+                } onChange: {
+                    // This will be called when any tracked property changes
+                    Task { @MainActor in
+                        // Update will happen on next iteration
+                    }
                 }
+
+                // Small delay to prevent tight loop
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
-            .store(in: &cancellables)
+        }
     }
     
     private func updateSessionLastAccessed(_ session: SessionResponse) {

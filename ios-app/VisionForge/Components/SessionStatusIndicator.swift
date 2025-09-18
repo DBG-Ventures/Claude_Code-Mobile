@@ -258,7 +258,7 @@ struct SessionStatusIndicator: View {
 // MARK: - Session Manager Status Bar
 
 struct SessionManagerStatusBar: View {
-    @EnvironmentObject var sessionStateManager: SessionStateManager
+    @Environment(SessionStateManager.self) var sessionStateManager: SessionStateManager
 
     var body: some View {
         HStack {

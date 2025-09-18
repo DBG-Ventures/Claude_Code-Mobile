@@ -19,10 +19,10 @@ struct ConversationView: View {
 
     // MARK: - State Properties
 
-    @StateObject private var conversationViewModel = ConversationViewModel()
-    @EnvironmentObject var networkManager: NetworkManager
-    @EnvironmentObject var sessionListViewModel: SessionListViewModel
-    @EnvironmentObject var sessionStateManager: SessionStateManager
+    @State private var conversationViewModel = ConversationViewModel()
+    @Environment(NetworkManager.self) var networkManager
+    @Environment(SessionListViewModel.self) var sessionListViewModel
+    @Environment(SessionStateManager.self) var sessionStateManager
     @State private var messageText: String = ""
     @State private var isComposing: Bool = false
     @FocusState private var isInputFocused: Bool

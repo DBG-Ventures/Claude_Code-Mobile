@@ -11,9 +11,9 @@ import Combine
 
 struct SessionSidebarView: View {
     // MARK: - Environment Objects
-    @EnvironmentObject var networkManager: NetworkManager
-    @EnvironmentObject var sessionViewModel: SessionListViewModel
-    @EnvironmentObject var sessionStateManager: SessionStateManager
+    @Environment(NetworkManager.self) var networkManager
+    @Environment(SessionListViewModel.self) var sessionViewModel
+    @Environment(SessionStateManager.self) var sessionStateManager
 
     // MARK: - Binding Properties
     @Binding var selectedSessionId: String?

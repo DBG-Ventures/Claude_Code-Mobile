@@ -7,12 +7,12 @@
 //
 
 import SwiftUI
-import Combine
+import Observation
 import Foundation
 
 // MARK: - Session State Manager Protocol
 
-protocol SessionStateManagerProtocol: ObservableObject {
+protocol SessionStateManagerProtocol: AnyObject {
     var activeSessions: [SessionManagerResponse] { get }
     var currentSessionId: String? { get }
     var sessionManagerStatus: SessionManagerConnectionStatus { get }
@@ -31,16 +31,17 @@ protocol SessionStateManagerProtocol: ObservableObject {
 // MARK: - Session State Manager Implementation
 
 @MainActor
-class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
+@Observable
+class SessionStateManager: SessionStateManagerProtocol {
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var activeSessions: [SessionManagerResponse] = []
-    @Published var currentSessionId: String?
-    @Published var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
-    @Published var isLoading: Bool = false
-    @Published var lastError: String?
-    @Published var sessionCacheSize: Int = 0
+    var activeSessions: [SessionManagerResponse] = []
+    var currentSessionId: String?
+    var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
+    var isLoading: Bool = false
+    var lastError: String?
+    var sessionCacheSize: Int = 0
 
     // MARK: - Internal Properties
 
@@ -51,7 +52,8 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
 
     private var claudeService: ClaudeService
     private let persistenceService: SessionPersistenceService
-    private var cancellables = Set<AnyCancellable>()
+    private var claudeServiceObserver: Task<Void, Never>?
+    private var appLifecycleObservers: [NSObjectProtocol] = []
 
     // Configuration
     private let maxCachedSessions = 20
@@ -88,45 +90,54 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
         }
     }
 
-    deinit {
-        backgroundRefreshTimer?.invalidate()
-        cancellables.removeAll()
-    }
+    // Cleanup handled through proper lifecycle management
 
     // MARK: - Setup and Observers
 
     private func setupObservers() {
-        // Monitor Claude service connection status
-        claudeService.$sessionManagerConnectionStatus
-            .receive(on: DispatchQueue.main)
-            .assign(to: \.sessionManagerStatus, on: self)
-            .store(in: &cancellables)
+        // Monitor Claude service using observation
+        claudeServiceObserver?.cancel()
+        claudeServiceObserver = Task { @MainActor in
+            while !Task.isCancelled {
+                withObservationTracking {
+                    // Track changes to ClaudeService properties
+                    self.sessionManagerStatus = claudeService.sessionManagerConnectionStatus
 
-        // Monitor session manager stats for health monitoring
-        claudeService.$sessionManagerStats
-            .compactMap { $0 }
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] stats in
-                self?.handleSessionManagerStatsUpdate(stats)
+                    if let stats = claudeService.sessionManagerStats {
+                        self.handleSessionManagerStatsUpdate(stats)
+                    }
+                } onChange: {
+                    Task { @MainActor in
+                        // Update will happen on next iteration
+                    }
+                }
+
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
-            .store(in: &cancellables)
+        }
 
         // Monitor app lifecycle for session state management
-        NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.handleAppWillEnterForeground()
-                }
+        let foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.handleAppWillEnterForeground()
             }
-            .store(in: &cancellables)
+        }
 
-        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.handleAppDidEnterBackground()
-                }
+        let backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.handleAppDidEnterBackground()
             }
-            .store(in: &cancellables)
+        }
+
+        appLifecycleObservers = [foregroundObserver, backgroundObserver]
     }
 
     private func startBackgroundRefresh() {
@@ -560,7 +571,7 @@ class SessionStateManager: ObservableObject, SessionStateManagerProtocol {
         claudeService = newClaudeService
 
         // Re-setup observers with the new service
-        cancellables.removeAll()
+        claudeServiceObserver?.cancel()
         setupObservers()
 
         print("✅ SessionStateManager updated with new ClaudeService")

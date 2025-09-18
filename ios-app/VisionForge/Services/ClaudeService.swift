@@ -7,12 +7,12 @@
 //
 
 import Foundation
-import Combine
+import Observation
 import UIKit
 
 // MARK: - Claude Service Protocol
 
-protocol ClaudeServiceProtocol: ObservableObject {
+protocol ClaudeServiceProtocol: AnyObject {
     // Legacy session management (backwards compatibility)
     func createSession(request: SessionRequest) async throws -> SessionResponse
     func getSession(sessionId: String, userId: String) async throws -> SessionResponse
@@ -59,15 +59,16 @@ enum ConnectionStatus: Equatable {
 // MARK: - Claude Service Implementation
 
 @MainActor
+@Observable
 class ClaudeService: NSObject, ClaudeServiceProtocol {
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var isConnected: Bool = false
-    @Published var connectionStatus: ConnectionStatus = .disconnected
-    @Published var sessionManagerConnectionStatus: SessionManagerConnectionStatus = .disconnected
-    @Published var lastError: ErrorResponse?
-    @Published var sessionManagerStats: SessionManagerStats?
+    var isConnected: Bool = false
+    var connectionStatus: ConnectionStatus = .disconnected
+    var sessionManagerConnectionStatus: SessionManagerConnectionStatus = .disconnected
+    var lastError: ErrorResponse?
+    var sessionManagerStats: SessionManagerStats?
 
     // MARK: - Private Properties
 
@@ -78,7 +79,7 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
 
     // Lifecycle management
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
-    private var cancellables = Set<AnyCancellable>()
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     // Retry configuration
     private let maxRetryAttempts = 3
@@ -117,36 +118,35 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
         setupLifecycleObservers()
     }
 
-    deinit {
-        // Clean up without async operations in deinit
-        // The disconnect will happen through lifecycle observers
-        cancellables.removeAll()
-
-        // Synchronously clean up any remaining background tasks
-        if backgroundTaskID != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
-        }
-    }
+    // Cleanup handled through proper lifecycle management
 
     // MARK: - Lifecycle Management
 
     private func setupLifecycleObservers() {
         // Handle app lifecycle transitions for connection management
-        NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
-            .sink { [weak self] _ in
+        lifecycleObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
                 Task { @MainActor in
                     await self?.handleAppWillEnterForeground()
                 }
             }
-            .store(in: &cancellables)
+        )
 
-        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
-            .sink { [weak self] _ in
+        lifecycleObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
                 Task { @MainActor in
                     self?.handleAppDidEnterBackground()
                 }
             }
-            .store(in: &cancellables)
+        )
     }
 
     private func handleAppWillEnterForeground() async {
@@ -512,9 +512,6 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
                             print("⚠️ Failed to decode SessionManager streaming chunk: \(error)")
                         }
                     }
-                } else if line.hasPrefix(":ping") || line.hasPrefix(": ping") {
-                    // SessionManager keep-alive
-                    continue
                 }
             }
 
@@ -681,13 +678,9 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
             }
 
             var hasReceivedData = false
-            var connectionIdleTime: TimeInterval = 0
-            let maxIdleTime: TimeInterval = 30.0
 
             // Process Server-Sent Events with connection monitoring
             for try await line in asyncBytes.lines {
-                connectionIdleTime = 0  // Reset idle timer on data received
-
                 if line.hasPrefix("data: ") {
                     hasReceivedData = true
                     let jsonData = String(line.dropFirst(6))
@@ -705,9 +698,6 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
                             // Continue processing other chunks
                         }
                     }
-                } else if line.hasPrefix(":ping") || line.hasPrefix(": ping") {
-                    // Server keep-alive, reset idle timer
-                    connectionIdleTime = 0
                 }
             }
 

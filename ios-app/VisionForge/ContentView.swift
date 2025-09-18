@@ -12,10 +12,10 @@ struct ContentView: View {
 
     // MARK: - State Properties
 
-    @EnvironmentObject var networkManager: NetworkManager
-    @EnvironmentObject var sessionPersistenceService: SessionPersistenceService
-    @EnvironmentObject var sessionStateManager: SessionStateManager
-    @EnvironmentObject var sessionListViewModel: SessionListViewModel
+    @Environment(NetworkManager.self) var networkManager
+    @Environment(SessionPersistenceService.self) var sessionPersistenceService
+    @Environment(SessionStateManager.self) var sessionStateManager
+    @Environment(SessionListViewModel.self) var sessionListViewModel
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
@@ -36,8 +36,8 @@ struct ContentView: View {
                 mainInterface
             }
         }
-        .environmentObject(sessionStateManager)  // Inject SessionStateManager following PRP pattern
-        .environmentObject(sessionPersistenceService)
+        .environment(sessionStateManager)  // Inject SessionStateManager following PRP pattern
+        .environment(sessionPersistenceService)
         .onAppear {
             initializeApp()
         }

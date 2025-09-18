@@ -8,7 +8,7 @@
 
 import Foundation
 import CoreData
-import Combine
+import Observation
 
 // MARK: - CoreData Model Definitions (Production-Stable)
 
@@ -109,12 +109,13 @@ enum SessionPersistenceError: LocalizedError {
 // MARK: - Session Persistence Service Implementation
 
 @MainActor
-class SessionPersistenceService: ObservableObject, SessionPersistenceServiceProtocol {
+@Observable
+class SessionPersistenceService: SessionPersistenceServiceProtocol {
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var isInitialized: Bool = false
-    @Published var storageStats: SessionStorageStats?
+    var isInitialized: Bool = false
+    var storageStats: SessionStorageStats?
 
     // MARK: - Private Properties
 

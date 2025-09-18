@@ -13,8 +13,8 @@ struct SessionManagerView: View {
     
     // MARK: - State Properties
     
-    @StateObject private var sessionViewModel = SessionListViewModel()
-    @EnvironmentObject var networkManager: NetworkManager
+    @State private var sessionViewModel = SessionListViewModel()
+    @Environment(NetworkManager.self) var networkManager
     @State private var showingNewSessionSheet: Bool = false
     @State private var showingDeleteAlert: Bool = false
     @State private var sessionToDelete: SessionResponse?
@@ -369,9 +369,9 @@ struct StatItem: View {
 // MARK: - New Session Sheet
 
 struct NewSessionSheet: View {
-    @EnvironmentObject var sessionViewModel: SessionListViewModel
-    @EnvironmentObject var networkManager: NetworkManager
-    @EnvironmentObject var sessionStateManager: SessionStateManager
+    @Environment(SessionListViewModel.self) var sessionViewModel
+    @Environment(NetworkManager.self) var networkManager
+    @Environment(SessionStateManager.self) var sessionStateManager
     @Environment(\.presentationMode) var presentationMode
 
     @State private var sessionName: String = ""

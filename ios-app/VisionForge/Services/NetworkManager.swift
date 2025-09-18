@@ -8,25 +8,26 @@
 
 import Foundation
 import Network
-import Combine
+import Observation
 
 // MARK: - Network Manager
 
 @MainActor
-class NetworkManager: ObservableObject {
+@Observable
+class NetworkManager {
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var isNetworkAvailable: Bool = true
-    @Published var connectionType: NWInterface.InterfaceType = .other
-    @Published var activeConfig: BackendConfig
-    @Published var claudeService: ClaudeService
+    var isNetworkAvailable: Bool = true
+    var connectionType: NWInterface.InterfaceType = .other
+    var activeConfig: BackendConfig
+    var claudeService: ClaudeService
 
     // MARK: - Private Properties
 
     private let pathMonitor: NWPathMonitor
     private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
-    private var cancellables = Set<AnyCancellable>()
+    private var pathUpdateHandler: ((NWPath) -> Void)?
 
     // MARK: - Initialization
 
@@ -57,7 +58,6 @@ class NetworkManager: ObservableObject {
 
     deinit {
         pathMonitor.cancel()
-        cancellables.removeAll()
     }
 
     // MARK: - Network Monitoring
