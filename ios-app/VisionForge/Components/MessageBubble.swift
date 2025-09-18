@@ -1,42 +1,21 @@
 //
 //  MessageBubble.swift
-//  Individual message display component with streaming support.
+//  Native iOS 26 message display component with glass adoption.
 //
-//  SwiftUI component for displaying individual Claude Code messages with support for 
-//  real-time streaming, syntax highlighting, and mobile-optimized performance.
+//  Simplified message component using standard SwiftUI with automatic glass adoption.
+//  Standard components replace custom liquid glass for native iOS 26 experience.
 //
 
 import SwiftUI
 
 struct MessageBubble: View {
-
     // MARK: - Properties
-
     let message: ClaudeMessage
     let isStreaming: Bool
 
     @State private var animateInsertion: Bool = false
 
-    // MARK: - Liquid Glass Enhancement State
-
-    @State private var liquidScale: CGFloat = 1.0
-    @State private var liquidGlow: Double = 0.0
-    @State private var contentPressure: CGFloat = 0.0
-    @State private var isPressed: Bool = false
-    @State private var touchLocation: CGPoint = .zero
-
-    // MARK: - System Integration
-
-    @EnvironmentObject private var accessibilityManager: AccessibilityManager
-    @EnvironmentObject private var performanceMonitor: LiquidPerformanceMonitor
-
-    // MARK: - Environment
-
-    @Environment(\.accessibilityReduceTransparency) var reduceTransparency
-    @Environment(\.accessibilityReduceMotion) var reduceMotion
-    
     // MARK: - Body
-    
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if message.role == .user {
@@ -44,8 +23,8 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
-                // Message Content with Liquid Enhancement
-                liquidEnhancedMessageContent
+                // Message Content
+                messageContent
 
                 // Message Metadata
                 messageMetadata
@@ -57,51 +36,14 @@ struct MessageBubble: View {
         }
         .scaleEffect(animateInsertion ? 1.0 : 0.95)
         .opacity(animateInsertion ? 1.0 : 0.0)
-        .scaleEffect(liquidScale) // Liquid scale effect
-        .shadow(
-            color: bubbleColor.opacity(liquidGlow * 0.3),
-            radius: 20 * liquidGlow,
-            x: 0,
-            y: 10 * liquidGlow
-        ) // Liquid glow effect
-        .liquidRippleOverlay(
-            accessibilityManager: accessibilityManager,
-            performanceMonitor: performanceMonitor,
-            maxRipples: 2
-        )
         .onAppear {
-            setupLiquidBubble()
-        }
-        .onChange(of: reduceTransparency) { _, newValue in
-            accessibilityManager.updateFromEnvironment(
-                reduceTransparency: newValue,
-                reduceMotion: reduceMotion,
-                dynamicTypeSize: .large
-            )
-        }
-        .onChange(of: reduceMotion) { _, newValue in
-            accessibilityManager.updateFromEnvironment(
-                reduceTransparency: reduceTransparency,
-                reduceMotion: newValue,
-                dynamicTypeSize: .large
-            )
-        }
-    }
-    
-    // MARK: - Liquid Enhanced Message Content
-
-    private var liquidEnhancedMessageContent: some View {
-        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 0) {
-            // Role Avatar with Liquid Enhancement
-            liquidEnhancedRoleAvatar
-
-            // Liquid Message Bubble
-            liquidMessageBubble
+            withAnimation(.easeOut(duration: 0.3)) {
+                animateInsertion = true
+            }
         }
     }
 
-    // MARK: - Message Content (Legacy)
-
+    // MARK: - Message Content
     private var messageContent: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 0) {
             // Role Avatar
@@ -111,9 +53,8 @@ struct MessageBubble: View {
             messageBubble
         }
     }
-    
+
     // MARK: - Role Avatar
-    
     private var roleAvatar: some View {
         HStack {
             if message.role == .user {
@@ -121,8 +62,8 @@ struct MessageBubble: View {
             }
 
             Circle()
-                .fill(avatarColor)
                 .frame(width: 32, height: 32)
+                .glassEffect(.regular.tint(avatarColor.opacity(0.8)), in: Circle())
                 .overlay {
                     Image(systemName: avatarIcon)
                         .foregroundColor(.white)
@@ -135,9 +76,8 @@ struct MessageBubble: View {
         }
         .padding(.bottom, 8)
     }
-    
+
     // MARK: - Message Bubble
-    
     private var messageBubble: some View {
         VStack(alignment: .leading, spacing: 0) {
             if isStreaming {
@@ -153,19 +93,12 @@ struct MessageBubble: View {
                     .padding(.vertical, bubblePadding.vertical)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                .fill(bubbleColor)
-                .shadow(color: .black.opacity(bubbleShadowOpacity), radius: 2, x: 0, y: 1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                .stroke(bubbleBorderColor, lineWidth: 0.5)
-        )
+        .glassEffect(.regular.tint(bubbleColor.opacity(0.1)), in: RoundedRectangle(cornerRadius: bubbleCornerRadius))
     }
-    
+
+    // Native glass background - handled by .glassEffect
+
     // MARK: - Message Metadata
-    
     private var messageMetadata: some View {
         HStack(spacing: 8) {
             if message.role == .user {
@@ -190,198 +123,7 @@ struct MessageBubble: View {
         .padding(.horizontal, 4)
     }
 
-    // MARK: - Liquid Enhanced Components
-
-    private var liquidEnhancedRoleAvatar: some View {
-        HStack {
-            if message.role == .user {
-                Spacer()
-            }
-
-            Circle()
-                .fill(liquidAvatarColor)
-                .frame(width: 32, height: 32)
-                .overlay {
-                    Image(systemName: avatarIcon)
-                        .foregroundColor(.white)
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                .scaleEffect(isPressed ? 0.95 : 1.0)
-                .liquidAnimation(.bubble, value: isPressed, accessibilityManager: accessibilityManager)
-
-            if message.role == .assistant {
-                Spacer()
-            }
-        }
-        .padding(.bottom, 8)
-    }
-
-    private var liquidMessageBubble: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isStreaming {
-                StreamingText(content: message.content)
-                    .padding(.horizontal, bubblePadding.horizontal)
-                    .padding(.vertical, bubblePadding.vertical)
-            } else {
-                Text(message.content)
-                    .font(messageFont)
-                    .foregroundColor(messageForegroundColor)
-                    .multilineTextAlignment(.leading)
-                    .padding(.horizontal, bubblePadding.horizontal)
-                    .padding(.vertical, bubblePadding.vertical)
-            }
-        }
-        .background(
-            liquidBubbleBackground
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                .stroke(bubbleBorderColor, lineWidth: 0.5)
-        )
-        .onTapGesture { location in
-            performLiquidInteraction(at: location)
-        }
-        .onPressureTouch { location, pressure in
-            handlePressureTouch(at: location, pressure: pressure)
-        }
-    }
-
-    private var liquidBubbleBackground: some View {
-        Group {
-            if accessibilityManager.shouldUseSolidBackgrounds {
-                // Accessibility: Solid background
-                RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                    .fill(bubbleColor)
-                    .opacity(accessibilityManager.getAccessibilityOpacity(baseOpacity: 0.9))
-            } else if performanceMonitor.liquidEffectsEnabled {
-                // Liquid glass background
-                RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                    .fill(.clear)
-                    .background(message.role == .user ? .regularMaterial : .ultraThinMaterial)
-                    .glassEffect(accessibilityManager.getGlassEffect())
-                    .overlay(
-                        // Enhanced color overlay for better contrast
-                        RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                            .fill(bubbleColor.opacity(message.role == .user ? 0.8 : contentPressure * 0.2))
-                    )
-            } else {
-                // Fallback background
-                RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                    .fill(bubbleColor)
-            }
-        }
-        .shadow(color: .black.opacity(bubbleShadowOpacity), radius: 2, x: 0, y: 1)
-    }
-
-    // MARK: - Liquid Interaction Methods
-
-    private func setupLiquidBubble() {
-        // Initialize animation with insertion
-        withAnimation(.easeOut(duration: 0.3)) {
-            animateInsertion = true
-        }
-
-        // Update accessibility manager
-        accessibilityManager.updateFromEnvironment(
-            reduceTransparency: reduceTransparency,
-            reduceMotion: reduceMotion,
-            dynamicTypeSize: .large
-        )
-
-        // Start performance monitoring if not already active
-        performanceMonitor.startMonitoring()
-    }
-
-    private func performLiquidInteraction(at location: CGPoint) {
-        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
-              performanceMonitor.liquidEffectsEnabled else {
-            return
-        }
-
-        touchLocation = location
-        isPressed = true
-
-        // Trigger liquid ripple
-        LiquidRippleEffect.triggerRipple(at: location, pressure: 1.0)
-
-        // Liquid bubble animation sequence
-        if let animation = Animation.liquid(.bubble, accessibilityManager: accessibilityManager) {
-            withAnimation(animation) {
-                liquidScale = 0.98
-                liquidGlow = 1.0
-            }
-
-            withAnimation(animation.delay(0.1)) {
-                liquidScale = 1.02
-                liquidGlow = 0.5
-            }
-
-            withAnimation(animation.delay(0.2)) {
-                liquidScale = 1.0
-                liquidGlow = 0.0
-                isPressed = false
-            }
-        } else {
-            // Immediate for accessibility
-            liquidScale = 1.0
-            liquidGlow = 0.0
-            isPressed = false
-        }
-
-        // Record interaction metrics
-        let metrics = LiquidInteractionMetrics(
-            touchLocation: location,
-            pressure: 1.0,
-            elementType: .messageBubble,
-            deviceCapabilities: DeviceCapabilities.current
-        )
-        performanceMonitor.recordInteraction(metrics)
-    }
-
-    private func handlePressureTouch(at location: CGPoint, pressure: Float) {
-        guard accessibilityManager.shouldEnableFeature(.interactiveEffects),
-              performanceMonitor.liquidEffectsEnabled else {
-            return
-        }
-
-        contentPressure = CGFloat(min(pressure, 2.0))
-        touchLocation = location
-
-        // Enhanced interaction for high pressure
-        if pressure > 1.5 {
-            LiquidRippleEffect.triggerRipple(at: location, pressure: pressure)
-
-            // Intense pressure feedback
-            if let animation = Animation.liquid(.feedback, accessibilityManager: accessibilityManager) {
-                withAnimation(animation) {
-                    liquidScale = 0.95 + CGFloat(pressure - 1.0) * 0.1
-                    liquidGlow = Double(pressure - 1.0) * 0.5
-                }
-            }
-        }
-
-        // Record pressure interaction
-        let metrics = LiquidInteractionMetrics(
-            touchLocation: location,
-            pressure: pressure,
-            elementType: .messageBubble,
-            deviceCapabilities: DeviceCapabilities.current
-        )
-        performanceMonitor.recordInteraction(metrics)
-    }
-
     // MARK: - Computed Properties
-
-    private var liquidAvatarColor: Color {
-        let baseColor = avatarColor
-
-        if isPressed && accessibilityManager.shouldEnableFeature(.interactiveEffects) {
-            return baseColor.opacity(0.8)
-        } else {
-            return baseColor
-        }
-    }
-    
     private var bubbleColor: Color {
         switch message.role {
         case .user:
@@ -392,7 +134,7 @@ struct MessageBubble: View {
             return Color(.tertiarySystemGroupedBackground)
         }
     }
-    
+
     private var bubbleBorderColor: Color {
         switch message.role {
         case .user:
@@ -470,14 +212,13 @@ struct MessageBubble: View {
     }
 
     // MARK: - Dynamic Styling Properties
-
     private var messageFont: Font {
         if let chunkType = getChunkType() {
             switch chunkType {
             case "tool", "system":
-                return .caption // More compact for tool messages
+                return .caption
             case "thinking":
-                return .callout // Slightly smaller for thinking
+                return .callout
             default:
                 return .body
             }
@@ -489,9 +230,9 @@ struct MessageBubble: View {
         if let chunkType = getChunkType() {
             switch chunkType {
             case "tool", "system":
-                return .secondary // More subtle for tool messages
+                return .secondary
             case "thinking":
-                return .primary.opacity(0.9) // Slightly muted for thinking
+                return .primary.opacity(0.9)
             default:
                 return message.role == .user ? .white : .primary
             }
@@ -503,11 +244,11 @@ struct MessageBubble: View {
         if let chunkType = getChunkType() {
             switch chunkType {
             case "tool", "system":
-                return (12, 8) // More compact padding
+                return (12, 8)
             case "thinking":
-                return (14, 10) // Slightly less padding
+                return (14, 10)
             default:
-                return (16, 12) // Full padding for main messages
+                return (16, 12)
             }
         }
         return (16, 12)
@@ -517,7 +258,7 @@ struct MessageBubble: View {
         if let chunkType = getChunkType() {
             switch chunkType {
             case "tool", "system":
-                return 12 // Smaller radius for subtle appearance
+                return 12
             default:
                 return 16
             }
@@ -529,22 +270,21 @@ struct MessageBubble: View {
         if let chunkType = getChunkType() {
             switch chunkType {
             case "tool", "system":
-                return 0.05 // Very subtle shadow
+                return 0.05
             case "thinking":
-                return 0.08 // Slightly more than tool
+                return 0.08
             default:
-                return 0.1 // Full shadow for main messages
+                return 0.1
             }
         }
         return 0.1
     }
-    
+
     // MARK: - Helper Methods
-    
     private func formatTimestamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         let calendar = Calendar.current
-        
+
         if calendar.isDate(date, inSameDayAs: Date()) {
             formatter.timeStyle = .short
             return formatter.string(from: date)
@@ -558,71 +298,63 @@ struct MessageBubble: View {
 }
 
 // MARK: - Streaming Text Component
-
 struct StreamingText: View {
-    
     // MARK: - Properties
-    
     let content: String
     @State private var visibleText: AttributedString = AttributedString()
     @State private var displayIndex: Int = 0
     @State private var streamTimer: Timer?
-    
+
     // MARK: - Body
-    
     var body: some View {
         Text(visibleText)
-            .font(.body.monospaced()) // CRITICAL: Layout stability during streaming
+            .font(.body.monospaced())
             .multilineTextAlignment(.leading)
-            .animation(nil) // Avoid withAnimation for typewriter effects - causes blending issues
+            .animation(nil) // Avoid withAnimation for typewriter effects
             .onAppear {
                 startStreaming()
             }
             .onDisappear {
                 stopStreaming()
             }
-            .onChange(of: content) { newContent in
+            .onChange(of: content) { _, newContent in
                 updateStreamingContent(newContent)
             }
     }
-    
+
     // MARK: - Streaming Logic
-    
     private func startStreaming() {
         streamTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { _ in
             updateVisibleText()
         }
     }
-    
+
     private func stopStreaming() {
         streamTimer?.invalidate()
         streamTimer = nil
     }
-    
+
     private func updateStreamingContent(_ newContent: String) {
-        // Reset streaming when content changes
         displayIndex = 0
         visibleText = AttributedString()
         startStreaming()
     }
-    
+
     private func updateVisibleText() {
         guard displayIndex < content.count else {
             stopStreaming()
             return
         }
-        
+
         let endIndex = content.index(content.startIndex, offsetBy: min(displayIndex + 1, content.count))
         let currentText = String(content[content.startIndex..<endIndex])
-        
-        // PATTERN: AttributedString for performance vs character-by-character
+
         visibleText = AttributedString(currentText)
         displayIndex += 1
     }
 }
 
 // MARK: - Preview
-
 #Preview {
     VStack(spacing: 20) {
         MessageBubble(
@@ -635,7 +367,7 @@ struct StreamingText: View {
             ),
             isStreaming: false
         )
-        
+
         MessageBubble(
             message: ClaudeMessage(
                 id: "2",
@@ -646,7 +378,7 @@ struct StreamingText: View {
             ),
             isStreaming: false
         )
-        
+
         MessageBubble(
             message: ClaudeMessage(
                 id: "3",

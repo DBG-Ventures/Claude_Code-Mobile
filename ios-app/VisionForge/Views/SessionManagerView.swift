@@ -204,7 +204,7 @@ struct SessionManagerView: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 12) {
                 ForEach(filteredSessions) { session in
-                    SessionRow(
+                    SessionManagerRow(
                         session: session,
                         onSelect: { selectedSession in
                             // Navigate to conversation
@@ -238,7 +238,7 @@ struct SessionManagerView: View {
 
 // MARK: - Session Row Component
 
-struct SessionRow: View {
+struct SessionManagerRow: View {
     let session: SessionResponse
     let onSelect: (SessionResponse) -> Void
     let onDelete: (SessionResponse) -> Void
@@ -247,8 +247,8 @@ struct SessionRow: View {
         HStack(spacing: 16) {
             // Session Icon
             Circle()
-                .fill(statusColor.gradient)
                 .frame(width: 44, height: 44)
+                .glassEffect(.regular.tint(statusColor.opacity(0.8)), in: Circle())
                 .overlay {
                     Image(systemName: statusIcon)
                         .foregroundColor(.white)
@@ -298,14 +298,7 @@ struct SessionRow: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.separator), lineWidth: 0.5)
-        )
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect(session)

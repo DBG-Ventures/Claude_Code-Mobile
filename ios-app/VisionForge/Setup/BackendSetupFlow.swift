@@ -114,8 +114,8 @@ struct BackendSetupFlow: View {
             HStack(spacing: 8) {
                 ForEach(SetupStep.allCases, id: \.rawValue) { step in
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(step.rawValue <= currentStep.rawValue ? Color.blue : Color.gray.opacity(0.3))
                         .frame(height: 4)
+                        .glassEffect(.regular.tint((step.rawValue <= currentStep.rawValue ? Color.blue : Color.gray).opacity(0.6)), in: RoundedRectangle(cornerRadius: 2))
                 }
             }
 
@@ -477,8 +477,7 @@ struct BackendSetupFlow: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 32)
                     .padding(.vertical, 12)
-                    .background(Color.blue)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .glassEffect(.regular.tint(.blue.opacity(0.8)), in: RoundedRectangle(cornerRadius: 12))
                 }
             }
 
@@ -537,10 +536,7 @@ struct BackendSetupFlow: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.secondarySystemGroupedBackground))
-            )
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
 
             Spacer()
         }

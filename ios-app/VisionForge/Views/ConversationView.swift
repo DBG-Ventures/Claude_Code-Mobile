@@ -30,31 +30,24 @@ struct ConversationView: View {
     // MARK: - Body
     
     var body: some View {
-        GeometryReader { geometry in
-            LiquidGlassContainer {
-                VStack(spacing: 0) {
-                    // Navigation Header
-                    navigationHeader
-
-                    // Error Display
-                    if let error = conversationViewModel.error {
-                        errorBanner(error: error)
-                    }
-
-                    // Messages List
-                    messagesScrollView(geometry: geometry)
-
-                    // Processing Indicator (when streaming)
-                    if conversationViewModel.isStreaming {
-                        processingIndicator
-                    }
-
-                    // Input Area
-                    messageInputArea
-                }
+        VStack(spacing: 0) {
+            // Error Display
+            if let error = conversationViewModel.error {
+                errorBanner(error: error)
             }
+
+            // Messages List
+            messagesScrollView
+
+            // Processing Indicator (when streaming)
+            if conversationViewModel.isStreaming {
+                processingIndicator
+            }
+
+            // Input Area
+            messageInputArea
         }
-        .navigationBarHidden(true)
+        .padding(.horizontal, 10)
         .onAppear {
             setupConversationIntegration()
             loadSessionWithSessionManager()
@@ -72,64 +65,10 @@ struct ConversationView: View {
         }
     }
     
-    // MARK: - Navigation Header
-    
-    private var navigationHeader: some View {
-        HStack {
-            Button(action: {}) {
-                Image(systemName: "sidebar.left")
-                    .foregroundColor(.primary)
-            }
-            
-            Spacer()
-            
-            VStack(spacing: 4) {
-                Text("Claude Code")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-
-                // Network and SessionManager status indicators
-                HStack(spacing: 12) {
-                    // Network Status
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(networkManager.isNetworkAvailable ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
-                        Text(networkManager.isNetworkAvailable ? "Network" : "Offline")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    // SessionManager Status
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(sessionManagerStatusColor)
-                            .frame(width: 8, height: 8)
-                        Text(sessionManagerStatusText)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
-            Spacer()
-            
-            Button(action: {}) {
-                Image(systemName: "ellipsis.circle")
-                    .foregroundColor(.primary)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(
-            .ultraThinMaterial,
-            in: Rectangle()
-        )
-    }
     
     // MARK: - Messages Scroll View
     
-    private func messagesScrollView(geometry: GeometryProxy) -> some View {
+    private var messagesScrollView: some View {
         ScrollViewReader { scrollProxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 16) {
@@ -145,7 +84,7 @@ struct ConversationView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
             }
-            .onChange(of: conversationViewModel.messages.count) { _ in
+            .onChange(of: conversationViewModel.messages.count) {
                 // Auto-scroll to latest message with animation
                 if let lastMessage = conversationViewModel.messages.last {
                     withAnimation(.easeOut(duration: 0.3)) {
@@ -222,7 +161,7 @@ struct ConversationView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
+                .fill(.secondary.opacity(0.1))
                 .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
         )
         .padding(.horizontal, 20)
@@ -234,51 +173,40 @@ struct ConversationView: View {
 
     private var messageInputArea: some View {
         HStack(alignment: .bottom, spacing: 12) {
-            // Text Input Field
-            HStack {
-                TextField("Message Claude Code...", text: $messageText, axis: .vertical)
-                    .focused($isInputFocused)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .lineLimit(1...5)
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                    .onChange(of: messageText) { newValue in
-                        isComposing = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    }
-                
-                if !messageText.isEmpty {
-                    Button(action: clearMessage) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
+            GlassEffectContainer {
+                // Text Input Field
+                HStack {
+                    TextField("Message Claude Code...", text: $messageText, axis: .vertical)
+                        .textFieldStyle(.automatic)
+                        .font(.body)
+                        .lineLimit(1...5)
+                        .onChange(of: messageText) {
+                            isComposing = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }
+                    
+                    if !messageText.isEmpty {
+                        Button(action: clearMessage) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glassEffect(.regular.tint(.secondary.opacity(0.2)))
+
+                // Send Button
+                Button(action: sendMessage) {
+                    Image(systemName: conversationViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
+                        .font(.title2)
+                        .glassEffect()
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(!canSendMessage)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(.thickMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-            )
-            
-            // Send Button
-            Button(action: sendMessage) {
-                Image(systemName: conversationViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(canSendMessage ? .accentColor : .secondary)
-            }
-            .disabled(!canSendMessage)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .background(
-            .regularMaterial,
-            in: Rectangle()
-        )
-        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
     
     // MARK: - Computed Properties

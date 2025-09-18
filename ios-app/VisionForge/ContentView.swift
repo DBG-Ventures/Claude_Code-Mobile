@@ -101,14 +101,16 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 450)
         } detail: {
             // Detail: Current conversation with SessionManager session context
-            if let sessionId = selectedSessionId {
-                ConversationView(sessionId: sessionId)
-                    .environmentObject(networkManager)
-                    .environmentObject(sessionListViewModel)
-                    .environmentObject(sessionStateManager)  // NEW: SessionManager integration
-                    .id(sessionId)  // Force view refresh when session changes
-            } else {
-                conversationEmptyState
+            Group {
+                if let sessionId = selectedSessionId {
+                    ConversationView(sessionId: sessionId)
+                        .environmentObject(networkManager)
+                        .environmentObject(sessionListViewModel)
+                        .environmentObject(sessionStateManager)  // NEW: SessionManager integration
+                        .id(sessionId)  // Force view refresh when session changes
+                } else {
+                    conversationEmptyState
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)

@@ -10,9 +10,6 @@ import SwiftUI
 @main
 struct VisionForgeApp: App {
     @StateObject private var networkManager: NetworkManager
-    @StateObject private var deviceCapabilities = DeviceCapabilityDetector()
-    @StateObject private var accessibilityManager = AccessibilityManager()
-    @StateObject private var performanceMonitor = LiquidPerformanceMonitor()
     @StateObject private var sessionPersistenceService = SessionPersistenceService()
     @StateObject private var sessionStateManager: SessionStateManager
 
@@ -43,9 +40,6 @@ struct VisionForgeApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(networkManager)
-                .environmentObject(deviceCapabilities)
-                .environmentObject(accessibilityManager)
-                .environmentObject(performanceMonitor)
                 .environmentObject(sessionPersistenceService)
                 .environmentObject(sessionStateManager)
                 .onAppear {
