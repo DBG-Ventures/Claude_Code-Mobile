@@ -1,9 +1,9 @@
 //
 //  ConversationView.swift
-//  Main chat interface with liquid glass effects and real-time streaming.
+//  Main chat interface with floating liquid glass elements.
 //
-//  SwiftUI chat interface optimized for iPad with liquid glass visual effects and
-//  performance-optimized streaming text display using AttributedString.
+//  Implements liquid glass design using iOS 26 glassEffect modifier
+//  following Apple's guidelines for floating functional layers.
 //
 
 import SwiftUI
@@ -22,32 +22,167 @@ struct ConversationView: View {
     @StateObject private var conversationViewModel = ConversationViewModel()
     @EnvironmentObject var networkManager: NetworkManager
     @EnvironmentObject var sessionListViewModel: SessionListViewModel
-    @EnvironmentObject var sessionStateManager: SessionStateManager  // NEW: SessionManager integration
+    @EnvironmentObject var sessionStateManager: SessionStateManager
     @State private var messageText: String = ""
     @State private var isComposing: Bool = false
     @FocusState private var isInputFocused: Bool
-    
+    @State private var scrollProxy: ScrollViewProxy?
+
     // MARK: - Body
-    
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Error Display
-            if let error = conversationViewModel.error {
-                errorBanner(error: error)
+        ZStack {
+            // Base layer: Messages that scroll edge-to-edge
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 16) {
+                        // Top padding for floating header (includes status bar)
+                        Color.clear
+                            .frame(height: 110)
+
+                        ForEach(conversationViewModel.messages) { message in
+                            MessageBubble(
+                                message: message,
+                                isStreaming: conversationViewModel.isStreaming &&
+                                            message.id == conversationViewModel.streamingMessageId
+                            )
+                            .id(message.id)
+                        }
+
+                        // Bottom padding for floating input area
+                        Color.clear
+                            .frame(height: 70)
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .background(Color(.systemBackground))
+                .onAppear {
+                    scrollProxy = proxy
+                }
+                .onChange(of: conversationViewModel.messages.count) {
+                    // Auto-scroll to latest message with animation
+                    if let lastMessage = conversationViewModel.messages.last {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                }
             }
 
-            // Messages List
-            messagesScrollView
+            // Floating layer with glass effects
+            VStack {
+                // Top header bar with glass effect - anchored to top edge
+                GlassEffectContainer {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(getCurrentSessionName())
+                                .font(.headline)
+                                .fontWeight(.semibold)
 
-            // Processing Indicator (when streaming)
-            if conversationViewModel.isStreaming {
-                processingIndicator
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(sessionManagerStatusColor)
+                                    .frame(width: 6, height: 6)
+
+                                Text(sessionManagerStatusText)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Spacer()
+
+                        // Action button with glass effect
+                        Button(action: clearConversation) {
+                            Image(systemName: "trash")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                                .frame(width: 32, height: 32)
+                                .glassEffect(.regular.tint(.secondary.opacity(0.1)), in: Circle())
+                        }
+                        .disabled(conversationViewModel.messages.isEmpty)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 50) // Account for status bar
+                    .padding(.bottom, 12)
+                }
+                .glassEffect(.regular, in: Rectangle())
+                .ignoresSafeArea(edges: .top)
+
+                // Error banner (appears above input when needed)
+                if let error = conversationViewModel.error {
+                    errorBanner(error: error)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
+                
+                Spacer()
+
+                // Processing indicator (when streaming)
+                if conversationViewModel.isStreaming {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+
+                        Text("Claude is thinking...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+                    .transition(.opacity)
+                }
+
+                // Bottom input area with glass effect - properly anchored to bottom edge
+                GlassEffectContainer {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        // Text Input Field with glass effect only (no overlay)
+                        HStack {
+                            TextField("Message", text: $messageText, axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.body)
+                                .lineLimit(1...6)
+                                .focused($isInputFocused)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                        }
+                        .glassEffect(
+                            .regular.tint(Color(.systemGray5).opacity(0.2)),
+                            in: RoundedRectangle(cornerRadius: 20)
+                        )
+                        .onSubmit {
+                            if canSendMessage {
+                                sendMessage()
+                            }
+                        }
+
+                        // Send Button with glass effect
+                        Button(action: sendMessage) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(canSendMessage ? .white : Color(.systemGray3))
+                                .frame(width: 34, height: 34)
+                                .background(
+                                    Circle()
+                                        .fill(canSendMessage ? Color.blue : Color.clear)
+                                )
+                                .glassEffect(
+                                    canSendMessage ? .regular.tint(.blue.opacity(0.1)) : .regular,
+                                    in: Circle()
+                                )
+                        }
+                        .disabled(!canSendMessage)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 5)
+                }
+                .ignoresSafeArea(edges: .bottom)
             }
-
-            // Input Area
-            messageInputArea
         }
-        .padding(.horizontal, 10)
         .onAppear {
             setupConversationIntegration()
             loadSessionWithSessionManager()
@@ -64,151 +199,37 @@ struct ConversationView: View {
             }
         }
     }
-    
-    
-    // MARK: - Messages Scroll View
-    
-    private var messagesScrollView: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 16) {
-                    ForEach(conversationViewModel.messages) { message in
-                        MessageBubble(
-                            message: message,
-                            isStreaming: conversationViewModel.isStreaming && 
-                                        message.id == conversationViewModel.streamingMessageId
-                        )
-                        .id(message.id)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-            }
-            .onChange(of: conversationViewModel.messages.count) {
-                // Auto-scroll to latest message with animation
-                if let lastMessage = conversationViewModel.messages.last {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        scrollProxy.scrollTo(lastMessage.id, anchor: .bottom)
-                    }
-                }
-            }
-        }
-    }
-    
+
     // MARK: - Error Banner
 
     private func errorBanner(error: ErrorResponse) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-
-                Text("Error")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-
-                Spacer()
-
-                Button(action: {
-                    conversationViewModel.error = nil
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
 
             Text(error.message)
-                .font(.body)
+                .font(.caption)
                 .foregroundColor(.primary)
-
-            if !error.error.isEmpty {
-                Text("Error type: \(error.error)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.orange.opacity(0.1))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.orange.opacity(0.3), lineWidth: 1)
-        )
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
-
-    // MARK: - Processing Indicator
-
-    private var processingIndicator: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .accentColor))
-                    .scaleEffect(0.8)
-
-                Text("Claude is thinking...")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
+                .lineLimit(2)
 
             Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.secondary.opacity(0.1))
-                .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-        )
-        .padding(.horizontal, 20)
-        .padding(.vertical, 4)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-    }
 
-    // MARK: - Message Input Area
-
-    private var messageInputArea: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            GlassEffectContainer {
-                // Text Input Field
-                HStack {
-                    TextField("Message Claude Code...", text: $messageText, axis: .vertical)
-                        .textFieldStyle(.automatic)
-                        .font(.body)
-                        .lineLimit(1...5)
-                        .onChange(of: messageText) {
-                            isComposing = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        }
-                    
-                    if !messageText.isEmpty {
-                        Button(action: clearMessage) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .glassEffect(.regular.tint(.secondary.opacity(0.2)))
-
-                // Send Button
-                Button(action: sendMessage) {
-                    Image(systemName: conversationViewModel.isStreaming ? "stop.circle.fill" : "arrow.up.circle.fill")
-                        .font(.title2)
-                        .glassEffect()
-                }
-                .buttonStyle(.glassProminent)
-                .disabled(!canSendMessage)
+            Button(action: {
+                conversationViewModel.error = nil
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(.orange.opacity(0.1))
+                .strokeBorder(.orange.opacity(0.3), lineWidth: 0.5)
+        )
     }
-    
+
     // MARK: - Computed Properties
 
     private var canSendMessage: Bool {
@@ -217,7 +238,6 @@ struct ConversationView: View {
                networkManager.isNetworkAvailable
     }
 
-    // SessionManager status indicators for navigation header
     private var sessionManagerStatusColor: Color {
         switch sessionStateManager.sessionManagerStatus {
         case .connected:
@@ -236,7 +256,7 @@ struct ConversationView: View {
     private var sessionManagerStatusText: String {
         switch sessionStateManager.sessionManagerStatus {
         case .connected:
-            return "SessionMgr"
+            return "Connected"
         case .connecting:
             return "Connecting"
         case .disconnected:
@@ -247,27 +267,30 @@ struct ConversationView: View {
             return "Error"
         }
     }
-    
+
     // MARK: - Actions
-    
+
     private func sendMessage() {
         guard canSendMessage else { return }
-        
+
         let trimmedMessage = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         conversationViewModel.sendMessage(trimmedMessage)
-        
-        // Clear input and hide keyboard
-        messageText = ""
-        isInputFocused = false
-    }
-    
-    private func clearMessage() {
+
+        // Clear input
         messageText = ""
     }
 
-    private func loadSessionFromViewModel() {
-        // Legacy method: Load the session data from the backend (with messages)
-        conversationViewModel.loadSession(sessionId: sessionId)
+    private func clearConversation() {
+        // TODO: Implement clear conversation
+        print("Clear conversation - not yet implemented")
+    }
+
+    private func getCurrentSessionName() -> String {
+        // Get session name from SessionStateManager
+        if let session = sessionStateManager.activeSessions.first(where: { $0.sessionId == sessionId }) {
+            return session.sessionName ?? "Untitled"
+        }
+        return "Session"
     }
 
     // MARK: - SessionManager Integration Methods

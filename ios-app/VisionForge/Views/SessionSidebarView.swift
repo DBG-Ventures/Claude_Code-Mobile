@@ -1,9 +1,9 @@
 //
 //  SessionSidebarView.swift
-//  Native iOS 26 sidebar navigation for session management.
+//  Native iOS 26 sidebar navigation with floating glass elements.
 //
-//  Simplified session switching interface using standard List with automatic glass adoption.
-//  Standard SwiftUI components replace custom liquid glass for native iOS 26 experience.
+//  Implements liquid glass design using glassEffect modifier and GlassEffectContainer
+//  for proper iOS 26 floating functional layer implementation.
 //
 
 import SwiftUI
@@ -29,20 +29,127 @@ struct SessionSidebarView: View {
 
     // MARK: - Body
     var body: some View {
-        VStack(spacing: 0) {
-            // Header section
-            sidebarHeader
+        ZStack {
+            // Base layer: Sessions list that extends edge-to-edge
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    // Top padding to account for floating header with status bar
+                    Color.clear
+                        .frame(height: 230) // Space for header + search + status bar
 
-            // Search bar
-            searchSection
+                    if sessionViewModel.isLoading {
+                        loadingView
+                    } else if filteredSessions.isEmpty {
+                        emptyStateView
+                    } else {
+                        ForEach(filteredSessions) { session in
+                            SessionRow(
+                                session: session,
+                                isSelected: selectedSessionId == session.sessionId,
+                                onSelect: { selectSession(session) },
+                                onDelete: { deleteSession(session) }
+                            )
+                            .padding(.horizontal, 16)
+                        }
+                    }
 
-            // Sessions list with native glass
-            sessionsListSection
+                    // Bottom padding to account for floating toolbar
+                    Color.clear
+                        .frame(height: 70)
+                }
+                .padding(.vertical, 12)
+            }
+            .background(Color(.systemGroupedBackground))
 
-            Spacer()
+            // Floating glass layer: Header and toolbar
+            VStack {
+                // Floating header with glass effect
+                GlassEffectContainer {
+                    VStack(spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Claude Code")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
 
-            // Bottom toolbar
-            bottomToolbar
+                                Text("\(filteredSessions.count) sessions")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            Button(action: { showingNewSessionSheet = true }) {
+                                Image(systemName: "plus")
+                                    .font(.title3)
+                                    .foregroundColor(.blue)
+                                    .frame(width: 32, height: 32)
+                                    .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
+                            }
+                            .disabled(sessionViewModel.isLoading)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 50)
+
+                        // Connection status indicator
+                        connectionStatusIndicator
+                            .padding(.horizontal, 16)
+
+                        // Search bar
+                        searchSection
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                    }
+                }
+                .ignoresSafeArea(edges: .top)
+
+                Spacer()
+
+                // Floating bottom toolbar
+                GlassEffectContainer {
+                    HStack(spacing: 16) {
+                        // Settings button
+                        Button(action: { showingSettings = true }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "gear")
+                                    .font(.body)
+
+                                Text("Settings")
+                                    .font(.body)
+                            }
+                            .foregroundColor(.blue)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .glassEffect(.regular.tint(.blue.opacity(0.1)), in: RoundedRectangle(cornerRadius: 8))
+                        }
+
+                        // Quick actions menu
+                        Menu {
+                            Button(action: { showingNewSessionSheet = true }) {
+                                Label("New Session", systemImage: "plus")
+                            }
+
+                            Button(action: { refreshSessions() }) {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+
+                            Button(action: { clearAllSessions() }) {
+                                Label("Clear All", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.body)
+                                .foregroundColor(.blue)
+                                .frame(width: 44, height: 44)
+                                .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 5)
+                }
+                .ignoresSafeArea(edges: .bottom)
+            }
         }
         .onAppear {
             setupViewModel()
@@ -86,46 +193,14 @@ struct SessionSidebarView: View {
         }
     }
 
-    // MARK: - Header Section
-    private var sidebarHeader: some View {
-        VStack(spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude Code")
-                        .font(.title2)
-                        .fontWeight(.bold)
-
-                    Text("\(filteredSessions.count) sessions")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                Button(action: { showingNewSessionSheet = true }) {
-                    Image(systemName: "plus")
-                        .font(.title3)
-                        .foregroundColor(.blue)
-                        .frame(width: 32, height: 32)
-                        .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
-                }
-                .disabled(sessionViewModel.isLoading)
-            }
-
-            // Connection status indicator
-            connectionStatusIndicator
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
+    // MARK: - Connection Status Indicator
     private var connectionStatusIndicator: some View {
         VStack(spacing: 6) {
             // Network Connection Status
             HStack(spacing: 8) {
                 Circle()
                     .frame(width: 8, height: 8)
-                    .glassEffect(.regular.tint((networkManager.claudeService.isConnected ? Color.green : Color.red).opacity(0.8)), in: Circle())
+                    .foregroundColor(networkManager.claudeService.isConnected ? .green : .red)
 
                 Text(networkManager.claudeService.isConnected ? "Network Connected" : "Network Disconnected")
                     .font(.caption)
@@ -144,7 +219,7 @@ struct SessionSidebarView: View {
             HStack(spacing: 8) {
                 Circle()
                     .frame(width: 8, height: 8)
-                    .glassEffect(.regular.tint(sessionManagerStatusColor.opacity(0.8)), in: Circle())
+                    .foregroundColor(sessionManagerStatusColor)
 
                 Text(sessionManagerStatusText)
                     .font(.caption)
@@ -161,7 +236,8 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Search Section
@@ -185,24 +261,11 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Sessions List Section
-    private var sessionsListSection: some View {
-        Group {
-            if sessionViewModel.isLoading {
-                loadingView
-            } else if filteredSessions.isEmpty {
-                emptyStateView
-            } else {
-                sessionsList
-            }
-        }
-    }
-
+    // MARK: - Loading View
     private var loadingView: some View {
         VStack(spacing: 12) {
             ProgressView()
@@ -215,6 +278,7 @@ struct SessionSidebarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Empty State View
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: searchText.isEmpty ? "message.badge" : "magnifyingglass")
@@ -241,73 +305,13 @@ struct SessionSidebarView: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .glassEffect(.regular.tint(.blue.opacity(0.8)), in: RoundedRectangle(cornerRadius: 6))
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 16)
-    }
-
-    // Native List with glass adoption
-    private var sessionsList: some View {
-        List(filteredSessions, selection: $selectedSessionId) { session in
-            SessionRow(
-                session: session,
-                isSelected: selectedSessionId == session.sessionId,
-                onSelect: { selectSession(session) },
-                onDelete: { deleteSession(session) }
-            )
-            .listRowBackground(Color.clear)
-        }
-        .listStyle(.sidebar)
-    }
-
-    // MARK: - Bottom Toolbar
-    private var bottomToolbar: some View {
-        VStack(spacing: 0) {
-            Divider()
-
-            HStack(spacing: 16) {
-                // Settings button
-                Button(action: { showingSettings = true }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "gear")
-                            .font(.body)
-
-                        Text("Settings")
-                            .font(.body)
-                    }
-                    .foregroundColor(.blue)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .glassEffect(.regular.tint(.blue.opacity(0.1)), in: RoundedRectangle(cornerRadius: 8))
-                }
-
-                // Quick actions menu
-                Menu {
-                    Button(action: { showingNewSessionSheet = true }) {
-                        Label("New Session", systemImage: "plus")
-                    }
-
-                    Button(action: { refreshSessions() }) {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-
-                    Button(action: { clearAllSessions() }) {
-                        Label("Clear All", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.body)
-                        .foregroundColor(.blue)
-                        .frame(width: 44, height: 44)
-                        .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
     }
 
     // MARK: - Computed Properties
@@ -437,7 +441,7 @@ struct SessionSidebarView: View {
     }
 }
 
-// MARK: - Session Row (Simplified)
+// MARK: - Session Row
 struct SessionRow: View {
     let session: SessionResponse
     let isSelected: Bool
@@ -449,7 +453,7 @@ struct SessionRow: View {
             // Status indicator
             Circle()
                 .frame(width: 8, height: 8)
-                .glassEffect(.regular.tint(statusColor.opacity(0.8)), in: Circle())
+                .foregroundColor(statusColor)
 
             // Session content
             VStack(alignment: .leading, spacing: 4) {
@@ -497,7 +501,10 @@ struct SessionRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .glassEffect(isSelected ? .regular.tint(.blue.opacity(0.2)) : .regular, in: RoundedRectangle(cornerRadius: 8))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()

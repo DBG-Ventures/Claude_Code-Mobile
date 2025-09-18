@@ -100,6 +100,17 @@ class SessionListViewModel: ObservableObject {
     }
 
     private func loadSessionsFromSessionManager() {
+        #if DEBUG
+        // Use dummy data for testing
+        isLoading = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.sessions = DummyData.dummySessions
+            self.isLoading = false
+            print("✅ Loaded \(DummyData.dummySessions.count) dummy sessions for testing")
+        }
+        return
+        #endif
+
         guard let sessionStateManager = sessionStateManager else { return }
 
         isLoading = true
