@@ -499,5 +499,5 @@ struct SavedConfigurationCard: View {
 // MARK: - Preview
 #Preview {
     EditableSettingsView()
-        .environmentObject(NetworkManager())
+        .previewEnvironment()
 }

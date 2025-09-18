@@ -634,14 +634,7 @@ enum SessionStateError: LocalizedError {
     }
 }
 
-struct SessionStateStatistics {
-    let totalActiveSessions: Int
-    let cachedSessions: Int
-    let currentSessionId: String?
-    let sessionManagerStatus: SessionManagerConnectionStatus
-    let lastRefreshTime: Date
-    let cacheHitRate: Double
-}
+// SessionStateStatistics moved to SessionRepository.swift to avoid duplication
 
 // MARK: - Preview Support
 

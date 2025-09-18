@@ -86,12 +86,13 @@ class SessionListViewModel {
 
     private func loadSessionsFromSessionManager() {
         #if DEBUG
-        // Use dummy data for testing
+        // Load dummy data in debug mode for UI testing
+        print("⚠️ Loading dummy SessionManager sessions for development testing")
         isLoading = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.sessions = DummyData.dummySessions
+            self.sessions = DummyData.dummySessionManagerSessions
             self.isLoading = false
-            print("✅ Loaded \(DummyData.dummySessions.count) dummy sessions for testing")
+            print("✅ Loaded \(DummyData.dummySessionManagerSessions.count) dummy SessionManager sessions for testing")
         }
         return
         #endif
@@ -107,7 +108,7 @@ class SessionListViewModel {
                 try await sessionStateManager.restoreSessionsFromPersistence()
 
                 await MainActor.run {
-                    self.sessionManagerSessions = sessionStateManager.activeSessions.sorted {
+                    self.sessions = sessionStateManager.activeSessions.sorted {
                         $0.lastActiveAt > $1.lastActiveAt
                     }
                 }
@@ -116,11 +117,11 @@ class SessionListViewModel {
                 try await sessionStateManager.refreshSessionsFromBackend()
 
                 await MainActor.run {
-                    self.sessionManagerSessions = sessionStateManager.activeSessions.sorted {
+                    self.sessions = sessionStateManager.activeSessions.sorted {
                         $0.lastActiveAt > $1.lastActiveAt
                     }
                     self.isLoading = false
-                    print("✅ Loaded \(self.sessionManagerSessions.count) sessions from SessionManager")
+                    print("✅ Loaded \(self.sessions.count) sessions from SessionManager")
                 }
 
             } catch {
@@ -132,37 +133,6 @@ class SessionListViewModel {
         }
     }
 
-    private func loadSessionsLegacy() {
-        guard let claudeService = claudeService else { return }
-
-        isLoading = true
-        error = nil
-
-        Task {
-            do {
-                // Create session list request
-                let listRequest = SessionListRequest(
-                    userId: userId,
-                    limit: 50,
-                    offset: 0,
-                    statusFilter: nil
-                )
-
-                let sessionListResponse = try await claudeService.getSessions(request: listRequest)
-
-                await MainActor.run {
-                    self.sessions = sessionListResponse.sessions.sorted { $0.updatedAt > $1.updatedAt }
-                    self.isLoading = false
-                }
-
-            } catch {
-                await MainActor.run {
-                    self.handleError(error, context: "loading sessions")
-                    self.isLoading = false
-                }
-            }
-        }
-    }
     
     func createNewSession(name: String, workingDirectory: String? = nil) async -> Bool {
         guard let repository else { return false }
@@ -197,8 +167,8 @@ class SessionListViewModel {
                 workingDirectory: workingDirectory
             )
 
-            self.sessionManagerSessions.insert(newSession, at: 0)
-            self.selectedSessionManager = newSession
+            self.sessions.insert(newSession, at: 0)
+            self.selectedSession = newSession
             print("✅ Created new SessionManager session: \(newSession.sessionId)")
             return true
 
@@ -208,46 +178,15 @@ class SessionListViewModel {
         }
     }
 
-    private func createNewSessionLegacy(name: String, workingDirectory: String? = nil) async -> Bool {
-        guard let claudeService = claudeService else {
-            return false
-        }
-
-        do {
-            let sessionRequest = SessionRequest(
-                userId: userId,
-                claudeOptions: ClaudeCodeOptions(
-                    apiKey: nil,
-                    model: nil, // Use default (latest) model
-                    maxTokens: 8192,
-                    temperature: 0.7,
-                    timeout: 60
-                ),
-                sessionName: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                workingDirectory: workingDirectory, // User-specified working directory
-                context: ["created_from": .string("mobile"), "platform": .string("iOS")]
-            )
-
-            let newSession = try await claudeService.createSession(request: sessionRequest)
-
-            self.sessions.insert(newSession, at: 0)
-            self.selectedSession = newSession
-            return true
-
-        } catch {
-            self.handleError(error, context: "creating new session")
-            return false
-        }
-    }
     
     func deleteSession(_ session: SessionManagerResponse) {
         guard let repository else { return }
 
         // Optimistically remove from UI
-        sessions.removeAll { $0.id == session.id }
+        sessions.removeAll { $0.sessionId == session.sessionId }
 
         // Clear selection if deleting selected session
-        if selectedSession?.id == session.id {
+        if selectedSession?.sessionId == session.sessionId {
             selectedSession = nil
         }
 
@@ -287,11 +226,11 @@ class SessionListViewModel {
                 try await sessionStateManager.refreshSessionsFromBackend()
 
                 await MainActor.run {
-                    self.sessionManagerSessions = sessionStateManager.activeSessions.sorted {
+                    self.sessions = sessionStateManager.activeSessions.sorted {
                         $0.lastActiveAt > $1.lastActiveAt
                     }
                     self.isRefreshing = false
-                    print("✅ Force refreshed \(self.sessionManagerSessions.count) sessions from backend")
+                    print("✅ Force refreshed \(self.sessions.count) sessions from backend")
                 }
 
             } catch {
@@ -313,38 +252,36 @@ class SessionListViewModel {
     }
 
     func switchToSessionManager(_ sessionId: String) {
-        guard let sessionStateManager = sessionStateManager else { return }
+        guard let repository = repository else { return }
 
         Task {
             do {
-                try await sessionStateManager.switchToSession(sessionId)
+                try await repository.switchToSession(sessionId)
 
-                // Update selection to reflect the switch
                 await MainActor.run {
-                    if let session = sessionStateManager.getSession(sessionId) {
-                        self.selectedSessionManager = session
+                    if let session = sessions.first(where: { $0.sessionId == sessionId }) {
+                        self.selectedSession = session
                     }
                 }
-
             } catch {
                 await MainActor.run {
-                    self.handleError(error, context: "switching to SessionManager session")
+                    self.handleError(error, context: "switching to session")
                 }
             }
         }
     }
     
-    func updateSessionInList(_ updatedSession: SessionResponse) {
-        if let index = sessions.firstIndex(where: { $0.id == updatedSession.id }) {
+    func updateSessionInList(_ updatedSession: SessionManagerResponse) {
+        if let index = sessions.firstIndex(where: { $0.sessionId == updatedSession.sessionId }) {
             sessions[index] = updatedSession
             
             // Re-sort sessions by updated date
-            sessions.sort { $0.updatedAt > $1.updatedAt }
+            sessions.sort { $0.lastActiveAt > $1.lastActiveAt }
         }
     }
     
-    func getSession(by id: String) -> SessionResponse? {
-        return sessions.first { $0.id == id }
+    func getSession(by id: String) -> SessionManagerResponse? {
+        return sessions.first { $0.sessionId == id }
     }
     
     // MARK: - Private Methods
@@ -392,13 +329,13 @@ class SessionListViewModel {
                 withObservationTracking {
                     // Track changes to SessionStateManager properties
                     self.sessionManagerStatus = sessionStateManager.sessionManagerStatus
-                    self.sessionManagerSessions = sessionStateManager.activeSessions.sorted {
+                    self.sessions = sessionStateManager.activeSessions.sorted {
                         $0.lastActiveAt > $1.lastActiveAt
                     }
 
                     if let sessionId = sessionStateManager.currentSessionId,
                        let session = sessionStateManager.getSession(sessionId) {
-                        self.selectedSessionManager = session
+                        self.selectedSession = session
                     }
                 } onChange: {
                     // This will be called when any tracked property changes
@@ -449,12 +386,11 @@ extension SessionListViewModel {
     static func preview() -> SessionListViewModel {
         let viewModel = SessionListViewModel()
 
-        // Configure for SessionManager mode
-        viewModel.useSessionManager = true
+        // Configure for connected status
         viewModel.sessionManagerStatus = .connected
 
-        // Add sample SessionManager sessions for preview
-        viewModel.sessionManagerSessions = [
+        // Add sample sessions for preview
+        viewModel.sessions = [
             SessionManagerResponse(
                 sessionId: "session-manager-1",
                 userId: "preview-user",
@@ -517,22 +453,7 @@ extension SessionListViewModel {
         ]
 
         // Set selected session
-        viewModel.selectedSessionManager = viewModel.sessionManagerSessions.first
-
-        // Also add legacy sessions for compatibility testing
-        viewModel.sessions = [
-            SessionResponse(
-                sessionId: "legacy-session-1",
-                userId: "preview-user",
-                sessionName: "Legacy Session",
-                status: .active,
-                messages: [],
-                createdAt: Date().addingTimeInterval(-3600),
-                updatedAt: Date().addingTimeInterval(-300),
-                messageCount: 2,
-                context: ["platform": .string("iOS")]
-            )
-        ]
+        viewModel.selectedSession = viewModel.sessions.first
 
         return viewModel
     }

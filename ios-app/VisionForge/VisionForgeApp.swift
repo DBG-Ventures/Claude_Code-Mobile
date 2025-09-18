@@ -10,13 +10,9 @@ import SwiftUI
 @main
 struct VisionForgeApp: App {
     @State private var networkManager: NetworkManager
-    @State private var sessionPersistenceService = SessionPersistenceService()
-    @State private var sessionStateManager: SessionStateManager
-    @State private var sessionListViewModel = SessionListViewModel()
     @State private var sessionRepository: SessionRepository
 
     init() {
-
         // Initialize network manager with saved configuration if available
         if let savedConfig = BackendConfig.loadFromKeychain() {
             _networkManager = State(initialValue: NetworkManager(config: savedConfig))
@@ -24,18 +20,11 @@ struct VisionForgeApp: App {
             _networkManager = State(initialValue: NetworkManager())
         }
 
-        // Initialize session persistence service
+        // Initialize session persistence service (internal to repository)
         let persistenceService = SessionPersistenceService()
-        _sessionPersistenceService = State(initialValue: persistenceService)
 
         // Initialize Claude service
         let claudeService = ClaudeService(baseURL: URL(string: "http://placeholder")!)
-
-        // Initialize session state manager with shared persistence service
-        _sessionStateManager = State(initialValue: SessionStateManager(
-            claudeService: claudeService,
-            persistenceService: persistenceService
-        ))
 
         // Initialize repository for unified session management
         _sessionRepository = State(initialValue: SessionRepository(
@@ -51,9 +40,6 @@ struct VisionForgeApp: App {
         WindowGroup {
             ContentView()
                 .environment(networkManager)
-                .environment(sessionPersistenceService)
-                .environment(sessionStateManager)
-                .environment(sessionListViewModel)
                 .environment(sessionRepository)
                 .onAppear {
                     restoreSessionsOnLaunch()
@@ -74,8 +60,8 @@ struct VisionForgeApp: App {
                     try await networkManager.claudeService.connect()
                     print("✅ Restored connection to backend")
 
-                    // NOTE: Session restoration moved to SessionManager
-                    print("✅ Session restoration delegated to SessionManager")
+                    // NOTE: Session restoration handled by SessionRepository
+                    print("✅ Session restoration delegated to SessionRepository")
                 } catch {
                     print("⚠️ Failed to restore connection: \(error)")
                 }

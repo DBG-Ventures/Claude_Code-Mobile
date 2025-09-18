@@ -171,6 +171,82 @@ struct DummyData {
         )
     ]
 
+    // MARK: - Dummy SessionManager Sessions
+    static let dummySessionManagerSessions: [SessionManagerResponse] = [
+        SessionManagerResponse(
+            sessionId: "sm-session-1",
+            userId: "user-1",
+            sessionName: "SwiftUI Liquid Glass Implementation",
+            workingDirectory: "/Users/developer/Projects/LiquidGlass",
+            status: .active,
+            createdAt: Date().addingTimeInterval(-7200),
+            lastActiveAt: Date().addingTimeInterval(-3500),
+            messageCount: 12,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        ),
+        SessionManagerResponse(
+            sessionId: "sm-session-2",
+            userId: "user-1",
+            sessionName: "FastAPI Backend Development",
+            workingDirectory: "/Users/developer/Projects/Backend",
+            status: .active,
+            createdAt: Date().addingTimeInterval(-86400),
+            lastActiveAt: Date().addingTimeInterval(-7200),
+            messageCount: 8,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        ),
+        SessionManagerResponse(
+            sessionId: "sm-session-3",
+            userId: "user-1",
+            sessionName: "Core Data Integration",
+            workingDirectory: "/Users/developer/Projects/CoreData",
+            status: .completed,
+            createdAt: Date().addingTimeInterval(-172800),
+            lastActiveAt: Date().addingTimeInterval(-86400),
+            messageCount: 15,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        ),
+        SessionManagerResponse(
+            sessionId: "sm-session-4",
+            userId: "user-1",
+            sessionName: "Machine Learning Model Training",
+            workingDirectory: "/Users/developer/Projects/ML",
+            status: .active,
+            createdAt: Date().addingTimeInterval(-259200),
+            lastActiveAt: Date().addingTimeInterval(-1800),
+            messageCount: 23,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        ),
+        SessionManagerResponse(
+            sessionId: "sm-session-5",
+            userId: "user-1",
+            sessionName: "API Authentication Strategies",
+            workingDirectory: "/Users/developer/Projects/Auth",
+            status: .paused,
+            createdAt: Date().addingTimeInterval(-345600),
+            lastActiveAt: Date().addingTimeInterval(-172800),
+            messageCount: 8,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        ),
+        SessionManagerResponse(
+            sessionId: "sm-session-6",
+            userId: "user-1",
+            sessionName: "Database Schema Design",
+            workingDirectory: "/Users/developer/Projects/DB",
+            status: .completed,
+            createdAt: Date().addingTimeInterval(-432000),
+            lastActiveAt: Date().addingTimeInterval(-259200),
+            messageCount: 12,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        )
+    ]
+
     // MARK: - Dummy Messages
     static let dummyMessages: [ClaudeMessage] = [
         ClaudeMessage(

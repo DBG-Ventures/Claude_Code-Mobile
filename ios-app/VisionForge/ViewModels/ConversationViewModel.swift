@@ -29,7 +29,6 @@ class ConversationViewModel {
     // MARK: - Private Properties
 
     private var claudeService: ClaudeService?
-    private var sessionStateManager: SessionStateManager?
     private var sessionStateObserver: Task<Void, Never>?
     private var streamingContinuation: Task<Void, Never>?
     private var currentSessionId: String?
@@ -66,28 +65,18 @@ class ConversationViewModel {
         // Session management now handled by SessionManager
     }
 
-    func setSessionStateManager(_ sessionStateManager: SessionStateManager) {
-        self.sessionStateManager = sessionStateManager
-        setupSessionStateObservers()
-
-        // Don't auto-create sessions here - wait for explicit load calls
-        if let currentSessionId = sessionStateManager.currentSessionId {
-            print("🔍 ConversationViewModel: SessionStateManager has current session: \(currentSessionId)")
-            // Don't auto-load, let ConversationView handle this
-        }
-    }
+    // SessionStateManager functionality now handled by SessionRepository
     
     func sendMessage(_ content: String) {
         sendMessageWithSessionManager(content)
     }
 
     private func sendMessageWithSessionManager(_ content: String) {
-        guard claudeService != nil,
-              let sessionStateManager = sessionStateManager,
+        guard let claudeService = claudeService,
               let currentSessionManager = currentSessionManager else {
             setError(ErrorResponse(
                 error: "configuration_error",
-                message: "SessionManager not configured or no active session",
+                message: "Service not configured or no active session",
                 details: nil,
                 timestamp: Date(),
                 requestId: nil
@@ -109,8 +98,9 @@ class ConversationViewModel {
         // Save message to conversation history
         let conversationMessage = ConversationMessage.from(userMessage)
         Task {
-            await sessionStateManager.saveConversationMessage(conversationMessage)
-            await sessionStateManager.updateSessionLastActive(currentSessionManager.sessionId)
+            // TODO: SessionRepository integration for conversation persistence
+            // await sessionRepository.saveConversationMessage(conversationMessage)
+            // await sessionRepository.updateSessionActivity(currentSessionManager.sessionId)
         }
 
         // Start streaming Claude's response with SessionManager
@@ -298,28 +288,21 @@ class ConversationViewModel {
             await MainActor.run {
                 self.currentSession = sessionResponse
 
-                // If we have SessionStateManager, ensure the session is in the cache
-                if let sessionStateManager = self.sessionStateManager {
-                    // Try to get from cache first
-                    if let sessionManagerResponse = sessionStateManager.getSession(sessionId) {
-                        self.currentSessionManager = sessionManagerResponse
-                    } else {
-                        // Convert SessionResponse to SessionManagerResponse
-                        let sessionManagerResponse = SessionManagerResponse(
-                            sessionId: sessionResponse.sessionId,
-                            userId: sessionResponse.userId,
-                            sessionName: sessionResponse.sessionName,
-                            workingDirectory: "/",
-                            status: sessionResponse.status,
-                            createdAt: sessionResponse.createdAt,
-                            lastActiveAt: sessionResponse.updatedAt,
-                            messageCount: sessionResponse.messageCount,
-                            conversationHistory: nil,
-                            sessionManagerStats: nil
-                        )
-                        self.currentSessionManager = sessionManagerResponse
-                    }
-                }
+                // SessionStateManager functionality now handled by SessionRepository
+                // Convert SessionResponse to SessionManagerResponse for compatibility
+                let sessionManagerResponse = SessionManagerResponse(
+                    sessionId: sessionResponse.sessionId,
+                    userId: sessionResponse.userId,
+                    sessionName: sessionResponse.sessionName,
+                    workingDirectory: "/",
+                    status: sessionResponse.status,
+                    createdAt: sessionResponse.createdAt,
+                    lastActiveAt: sessionResponse.updatedAt,
+                    messageCount: sessionResponse.messageCount,
+                    conversationHistory: nil,
+                    sessionManagerStats: nil
+                )
+                self.currentSessionManager = sessionManagerResponse
 
                 // Load conversation history from the session response
                 self.messages = sessionResponse.messages.map { message in
@@ -364,33 +347,8 @@ class ConversationViewModel {
     }
 
     private func setupSessionStateObservers() {
-        guard let sessionStateManager = sessionStateManager else { return }
-
-        // Cancel existing observer if any
-        sessionStateObserver?.cancel()
-
-        // Use withObservationTracking for efficient updates
-        sessionStateObserver = Task { @MainActor in
-            while !Task.isCancelled {
-                withObservationTracking {
-                    // Track changes to SessionStateManager properties
-                    self.sessionManagerStatus = sessionStateManager.sessionManagerStatus
-
-                    if let sessionId = sessionStateManager.currentSessionId,
-                       sessionId != self.currentSessionId {
-                        self.handleSessionChange(sessionId)
-                    }
-                } onChange: {
-                    // This will be called when any tracked property changes
-                    Task { @MainActor in
-                        // Update will happen on next iteration
-                    }
-                }
-
-                // Small delay to prevent tight loop
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            }
-        }
+        // SessionStateManager functionality now handled by SessionRepository
+        // This method is kept for compatibility but no longer used
     }
 
     private func handleSessionChange(_ sessionId: String) {
@@ -401,130 +359,21 @@ class ConversationViewModel {
     }
 
     private func createInitialSessionWithManager() {
-        guard let sessionStateManager = sessionStateManager else {
-            print("❌ ConversationViewModel: SessionStateManager is nil, cannot create session")
-            return
-        }
-
-        print("🔍 ConversationViewModel: Starting session creation...")
-        isLoading = true
-
-        Task {
-            do {
-                print("🔍 ConversationViewModel: Calling sessionStateManager.createNewSession...")
-                let session = try await sessionStateManager.createNewSession(
-                    name: "Mobile Chat Session",
-                    workingDirectory: nil
-                )
-
-                await MainActor.run {
-                    self.currentSessionManager = session
-                    self.currentSessionId = session.sessionId
-                    self.isLoading = false
-                    print("✅ Created initial SessionManager session: \(session.sessionId)")
-                }
-
-            } catch {
-                print("❌ ConversationViewModel: Session creation failed: \(error)")
-                await MainActor.run {
-                    self.setError(ErrorResponse(
-                        error: "session_creation_error",
-                        message: "Failed to create SessionManager session: \(error.localizedDescription)",
-                        details: nil,
-                        timestamp: Date(),
-                        requestId: nil
-                    ))
-                    self.isLoading = false
-                }
-            }
-        }
+        // SessionStateManager functionality now handled by SessionRepository
+        print("⚠️ ConversationViewModel: SessionStateManager integration removed")
+        // TODO: Integrate with SessionRepository for session creation
     }
 
     private func loadSessionWithManager(sessionId: String) {
-        guard let sessionStateManager = sessionStateManager else {
-            setError(ErrorResponse(
-                error: "configuration_error",
-                message: "SessionStateManager not configured",
-                details: nil,
-                timestamp: Date(),
-                requestId: nil
-            ))
-            return
-        }
-
-        // Stop any current streaming
-        stopStreaming()
-
-        // Clear current messages
-        clearMessages()
-
-        isLoading = true
-
-        Task {
-            do {
-                // Switch to session using SessionStateManager
-                try await sessionStateManager.switchToSession(sessionId)
-
-                // Get session from cache
-                if let session = sessionStateManager.getSession(sessionId) {
-                    await MainActor.run {
-                        self.currentSessionManager = session
-                        self.currentSessionId = sessionId
-                        print("✅ Loaded SessionManager session \(sessionId)")
-                    }
-
-                    // Load conversation history
-                    await loadConversationHistoryFromSessionManager(sessionId: sessionId)
-                }
-
-                await MainActor.run {
-                    self.isLoading = false
-                }
-
-            } catch {
-                await MainActor.run {
-                    self.isLoading = false
-                    self.setError(ErrorResponse(
-                        error: "session_load_failed",
-                        message: "Failed to load session: \(error.localizedDescription)",
-                        details: nil,
-                        timestamp: Date(),
-                        requestId: nil
-                    ))
-                }
-            }
-        }
+        // TODO: Implement with SessionRepository
+        print("⚠️ loadSessionWithManager: SessionRepository integration needed")
+        return
     }
 
     private func loadConversationHistoryFromSessionManager(sessionId: String) async {
-        guard let sessionStateManager = sessionStateManager else { return }
-
-        // Get the session from SessionStateManager cache
-        if let session = sessionStateManager.getSession(sessionId) {
-            await MainActor.run {
-                // Load conversation history from the session
-                if let history = session.conversationHistory {
-                    self.messages = history.map { convMessage in
-                        ClaudeMessage(
-                            id: convMessage.messageId ?? convMessage.id,
-                            content: convMessage.content,
-                            role: convMessage.role,
-                            timestamp: convMessage.timestamp,
-                            sessionId: sessionId,
-                            metadata: convMessage.sessionManagerContext ?? [:]
-                        )
-                    }
-                    print("✅ Loaded \(history.count) messages from SessionManager session")
-                } else {
-                    // No conversation history yet
-                    self.messages = []
-                    print("✅ SessionManager session has no messages yet")
-                }
-            }
-        } else {
-            print("⚠️ Session not found in SessionManager cache")
-            // Don't show error to user for history loading failures
-        }
+        // TODO: Implement with SessionRepository
+        print("⚠️ loadConversationHistoryFromSessionManager: SessionRepository integration needed")
+        return
     }
 
     private func startStreamingResponseWithSessionManager(query: String, sessionId: String) {
@@ -574,10 +423,10 @@ class ConversationViewModel {
                             self.isStreaming = false
                             self.streamingMessageId = nil
 
-                            // Save all assistant messages from this session to conversation history
-                            Task {
-                                await self.sessionStateManager?.updateSessionLastActive(sessionId)
-                            }
+                            // TODO: SessionRepository integration for session activity tracking
+                            // Task {
+                            //     await self.sessionRepository?.updateSessionActivity(sessionId)
+                            // }
                         }
 
                     case .error:

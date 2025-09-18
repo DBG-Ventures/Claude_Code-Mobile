@@ -258,19 +258,19 @@ struct SessionStatusIndicator: View {
 // MARK: - Session Manager Status Bar
 
 struct SessionManagerStatusBar: View {
-    @Environment(SessionStateManager.self) var sessionStateManager: SessionStateManager
+    @Environment(SessionRepository.self) var sessionRepository: SessionRepository
 
     var body: some View {
         HStack {
             SessionStatusIndicator(
-                status: sessionStateManager.sessionManagerStatus,
-                sessionManagerStats: nil, // TODO: Add public sessionManagerStats property to SessionStateManager
+                status: sessionRepository.sessionManagerStatus,
+                sessionManagerStats: nil, // Stats available via sessionRepository if needed
                 isCompact: true
             )
 
             Spacer()
 
-            if sessionStateManager.isLoading {
+            if sessionRepository.isLoading {
                 HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.6)
@@ -280,8 +280,8 @@ struct SessionManagerStatusBar: View {
                 }
             }
 
-            if sessionStateManager.sessionCacheSize > 0 {
-                Text("\(sessionStateManager.sessionCacheSize) cached")
+            if sessionRepository.sessionCacheSize > 0 {
+                Text("\(sessionRepository.sessionCacheSize) cached")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }

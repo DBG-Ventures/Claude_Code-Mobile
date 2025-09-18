@@ -13,9 +13,7 @@ struct ContentView: View {
     // MARK: - State Properties
 
     @Environment(NetworkManager.self) var networkManager
-    @Environment(SessionPersistenceService.self) var sessionPersistenceService
-    @Environment(SessionStateManager.self) var sessionStateManager
-    @Environment(SessionListViewModel.self) var sessionListViewModel
+    @Environment(SessionRepository.self) var sessionRepository
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
@@ -36,23 +34,21 @@ struct ContentView: View {
                 mainInterface
             }
         }
-        .environment(sessionStateManager)  // Inject SessionStateManager following PRP pattern
-        .environment(sessionPersistenceService)
         .onAppear {
             initializeApp()
         }
         .task {
             // Check SessionManager connection status and load sessions
-            await sessionStateManager.checkSessionManagerConnectionStatus()
+            await sessionRepository.checkSessionManagerConnectionStatus()
 
             // Small delay to ensure UI is ready
             try? await Task.sleep(for: .milliseconds(50))
 
             // Select most recent active session if available
             await MainActor.run {
-                if let recentSession = sessionStateManager.activeSessions.first(where: { $0.status == .active }) {
+                if let recentSession = sessionRepository.activeSessions.first(where: { $0.status == .active }) {
                     selectedSessionId = recentSession.sessionId
-                } else if let firstSession = sessionStateManager.activeSessions.first {
+                } else if let firstSession = sessionRepository.activeSessions.first {
                     // If no active session, select the first one
                     selectedSessionId = firstSession.sessionId
                 }
@@ -115,7 +111,7 @@ struct ContentView: View {
             NewSessionSheet()
                 .onDisappear {
                     // Select the newly created session if one was created
-                    if let newSessionId = sessionStateManager.currentSessionId {
+                    if let newSessionId = sessionRepository.currentSessionId {
                         selectedSessionId = newSessionId
                     }
                 }
@@ -188,10 +184,10 @@ struct ContentView: View {
             needsBackendSetup = false
             Task {
                 await networkManager.updateConfiguration(savedConfig)
-                // Update SessionStateManager with the proper ClaudeService from NetworkManager
-                await sessionStateManager.updateClaudeService(networkManager.claudeService)
+                // Update SessionRepository with the proper ClaudeService from NetworkManager
+                await sessionRepository.updateClaudeService(networkManager.claudeService)
                 // Check SessionManager connection status after updating the service - this loads sessions
-                await sessionStateManager.checkSessionManagerConnectionStatus()
+                await sessionRepository.checkSessionManagerConnectionStatus()
                 // No need to call restoreSessionsFromPersistence as checkSessionManagerConnectionStatus already loads sessions
             }
         } else {
@@ -206,10 +202,10 @@ struct ContentView: View {
         if let savedConfig = BackendSetupFlow.getSavedConfiguration() {
             Task {
                 await networkManager.updateConfiguration(savedConfig)
-                // Update SessionStateManager with the proper ClaudeService from NetworkManager
-                await sessionStateManager.updateClaudeService(networkManager.claudeService)
+                // Update SessionRepository with the proper ClaudeService from NetworkManager
+                await sessionRepository.updateClaudeService(networkManager.claudeService)
                 // Check SessionManager connection status after updating the service - this loads sessions
-                await sessionStateManager.checkSessionManagerConnectionStatus()
+                await sessionRepository.checkSessionManagerConnectionStatus()
                 // Save to Keychain for future use
                 try? savedConfig.saveToKeychain()
                 // No need to call restoreSessionsFromPersistence as checkSessionManagerConnectionStatus already loads sessions
@@ -233,12 +229,9 @@ struct ContentView: View {
     }
 
     private func setupSessionManagement() {
-        // Initialize SessionStateManager integration with legacy SessionListViewModel
-        sessionListViewModel.setClaudeService(networkManager.claudeService)
-
-        // Setup session state monitoring for UI updates
-        // SessionStateManager will be monitored through @Published properties automatically
-        print("✅ SessionManager integration initialized")
+        // SessionRepository handles all session management now
+        // It will be monitored through @Observable properties automatically
+        print("✅ SessionRepository integration initialized")
     }
 
     private func createNewSession() {

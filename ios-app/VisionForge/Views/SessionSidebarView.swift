@@ -12,8 +12,7 @@ import Combine
 struct SessionSidebarView: View {
     // MARK: - Environment Objects
     @Environment(NetworkManager.self) var networkManager
-    @Environment(SessionListViewModel.self) var sessionViewModel
-    @Environment(SessionStateManager.self) var sessionStateManager
+    @Environment(SessionRepository.self) var sessionRepository
 
     // MARK: - Binding Properties
     @Binding var selectedSessionId: String?
@@ -23,7 +22,7 @@ struct SessionSidebarView: View {
     @State private var showingNewSessionSheet: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingDeleteAlert: Bool = false
-    @State private var sessionToDelete: SessionResponse?
+    @State private var sessionToDelete: SessionManagerResponse?
     @State private var showingDeleteError: Bool = false
     @State private var deleteErrorMessage: String = ""
 
@@ -37,7 +36,7 @@ struct SessionSidebarView: View {
                     Color.clear
                         .frame(height: 160) // Space for header + search + status bar
 
-                    if sessionViewModel.isLoading {
+                    if sessionRepository.isLoading {
                         loadingView
                     } else if filteredSessions.isEmpty {
                         emptyStateView
@@ -81,7 +80,7 @@ struct SessionSidebarView: View {
                                         .frame(width: 32, height: 32)
                                         .glassEffect(.clear.tint(.blue.opacity(0.1)), in: Circle())
                                 }
-                                .disabled(sessionViewModel.isLoading)
+                                .disabled(sessionRepository.isLoading)
                             }
                             .padding(.horizontal, 16)
                             .padding(.top, 50)
@@ -151,23 +150,11 @@ struct SessionSidebarView: View {
         .onAppear {
             setupViewModel()
         }
-        .onReceive(sessionViewModel.$selectedSession) { selectedSession in
-            if let sessionId = selectedSession?.sessionId {
-                selectedSessionId = sessionId
-            }
-        }
-        .onReceive(sessionStateManager.$activeSessions) { _ in
-            // Force UI update when SessionManager sessions change
-        }
         .sheet(isPresented: $showingNewSessionSheet) {
             NewSessionSheet()
-                .environmentObject(networkManager)
-                .environmentObject(sessionViewModel)
-                .environmentObject(sessionStateManager)
         }
         .sheet(isPresented: $showingSettings) {
             EditableSettingsView()
-                .environmentObject(networkManager)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -224,8 +211,8 @@ struct SessionSidebarView: View {
 
                 Spacer()
 
-                if sessionStateManager.sessionManagerStatus == .connected {
-                    Text("\(sessionStateManager.activeSessions.count) active")
+                if sessionRepository.sessionManagerStatus == .connected {
+                    Text("\(sessionRepository.activeSessions.count) active")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -309,24 +296,24 @@ struct SessionSidebarView: View {
     }
 
     // MARK: - Computed Properties
-    private var filteredSessions: [SessionResponse] {
-        let allSessions = combineSessionSources()
+    private var filteredSessions: [SessionManagerResponse] {
+        let allSessions = sessionRepository.sessions
 
         if searchText.isEmpty {
             return allSessions
         } else {
             return allSessions.filter { session in
-                session.sessionName?.localizedCaseInsensitiveContains(searchText) ?? false ||
+                (session.sessionName ?? "").localizedCaseInsensitiveContains(searchText) ||
                 session.sessionId.localizedCaseInsensitiveContains(searchText) ||
-                session.messages.contains { message in
+                (session.conversationHistory?.contains { message in
                     message.content.localizedCaseInsensitiveContains(searchText)
-                }
+                } ?? false)
             }
         }
     }
 
     private var sessionManagerStatusColor: Color {
-        switch sessionStateManager.sessionManagerStatus {
+        switch sessionRepository.sessionManagerStatus {
         case .connected:
             return .green
         case .connecting:
@@ -341,7 +328,7 @@ struct SessionSidebarView: View {
     }
 
     private var sessionManagerStatusText: String {
-        switch sessionStateManager.sessionManagerStatus {
+        switch sessionRepository.sessionManagerStatus {
         case .connected:
             return "SessionManager Connected"
         case .connecting:
@@ -356,33 +343,36 @@ struct SessionSidebarView: View {
     }
 
     // MARK: - Helper Methods
-    private func combineSessionSources() -> [SessionResponse] {
-        let sessionManagerSessions = sessionStateManager.activeSessions.map { sessionManagerSession in
-            convertToSessionResponse(sessionManagerSession)
-        }
-
-        return sessionManagerSessions.sorted { $0.updatedAt > $1.updatedAt }
+    private func combineSessionSources() -> [SessionManagerResponse] {
+        // No longer needed - using sessionRepository.sessions directly
+        return sessionRepository.sessions.sorted { $0.lastActiveAt > $1.lastActiveAt }
     }
 
     private func setupViewModel() {
-        sessionViewModel.setClaudeService(networkManager.claudeService)
-        sessionViewModel.loadSessions()
+        // Repository is already initialized with claudeService
+        Task {
+            do {
+                _ = try await sessionRepository.getAllSessions()
+            } catch {
+                print("⚠️ Failed to load sessions: \(error)")
+            }
+        }
     }
 
-    private func selectSession(_ session: SessionResponse) {
+    private func selectSession(_ session: SessionManagerResponse) {
         selectedSessionId = session.sessionId
-        sessionViewModel.selectSession(session)
+        sessionRepository.selectSession(session)
     }
 
-    private func deleteSession(_ session: SessionResponse) {
+    private func deleteSession(_ session: SessionManagerResponse) {
         sessionToDelete = session
         showingDeleteAlert = true
     }
 
-    private func deleteSessionAction(_ session: SessionResponse) {
+    private func deleteSessionAction(_ session: SessionManagerResponse) {
         Task {
             do {
-                try await sessionStateManager.deleteSession(session.sessionId)
+                try await sessionRepository.deleteSession(session.sessionId)
                 sessionToDelete = nil
                 if selectedSessionId == session.sessionId {
                     selectedSessionId = nil
@@ -398,10 +388,10 @@ struct SessionSidebarView: View {
     }
 
     private func refreshSessions() {
-        sessionViewModel.loadSessions()
+        sessionRepository.refreshSessions()
 
         Task {
-            await sessionStateManager.checkSessionManagerConnectionStatus()
+            await sessionRepository.checkSessionManagerConnectionStatus()
         }
     }
 
@@ -411,33 +401,12 @@ struct SessionSidebarView: View {
         }
     }
 
-    private func convertToSessionResponse(_ sessionManagerResponse: SessionManagerResponse) -> SessionResponse {
-        return SessionResponse(
-            sessionId: sessionManagerResponse.sessionId,
-            userId: sessionManagerResponse.userId,
-            sessionName: sessionManagerResponse.sessionName,
-            status: sessionManagerResponse.status,
-            messages: sessionManagerResponse.conversationHistory?.map { convMessage in
-                ClaudeMessage(
-                    id: convMessage.messageId ?? convMessage.id,
-                    content: convMessage.content,
-                    role: convMessage.role,
-                    timestamp: convMessage.timestamp,
-                    sessionId: sessionManagerResponse.sessionId,
-                    metadata: convMessage.sessionManagerContext ?? [:]
-                )
-            } ?? [],
-            createdAt: sessionManagerResponse.createdAt,
-            updatedAt: sessionManagerResponse.lastActiveAt,
-            messageCount: sessionManagerResponse.messageCount,
-            context: [:]
-        )
-    }
+    // convertToSessionResponse no longer needed - using SessionManagerResponse directly
 }
 
 // MARK: - Session Row
 struct SessionRow: View {
-    let session: SessionResponse
+    let session: SessionManagerResponse
     let isSelected: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
@@ -460,7 +429,7 @@ struct SessionRow: View {
 
                     Spacer()
 
-                    Text(formatRelativeTime(session.updatedAt))
+                    Text(formatRelativeTime(session.lastActiveAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -482,7 +451,7 @@ struct SessionRow: View {
                     }
                 }
 
-                if let lastMessage = session.messages.last {
+                if let lastMessage = session.conversationHistory?.last {
                     Text(lastMessage.content)
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -537,11 +506,11 @@ struct SessionRow: View {
 #Preview {
     @Previewable @State var selectedSessionId: String? = nil
 
-    return NavigationSplitView {
+    NavigationSplitView {
         SessionSidebarView(selectedSessionId: $selectedSessionId)
-            .environmentObject(NetworkManager())
-            .environmentObject(SessionListViewModel())
-            .environmentObject(SessionStateManager(
+            .environment(NetworkManager())
+            .environment(SessionListViewModel())
+            .environment(SessionStateManager(
                 claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
                 persistenceService: SessionPersistenceService()
             ))

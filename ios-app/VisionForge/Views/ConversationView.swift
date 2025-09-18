@@ -21,8 +21,7 @@ struct ConversationView: View {
 
     @State private var conversationViewModel = ConversationViewModel()
     @Environment(NetworkManager.self) var networkManager
-    @Environment(SessionListViewModel.self) var sessionListViewModel
-    @Environment(SessionStateManager.self) var sessionStateManager
+    @Environment(SessionRepository.self) var sessionRepository
     @State private var messageText: String = ""
     @State private var isComposing: Bool = false
     @FocusState private var isInputFocused: Bool
@@ -72,7 +71,7 @@ struct ConversationView: View {
                         // Centered header component mimicking Messages app
                         ConversationHeaderView(
                             sessionName: getCurrentSessionName(),
-                            status: sessionStateManager.sessionManagerStatus
+                            status: sessionRepository.sessionManagerStatus
                         )
 
                         // Right spacer and action button
@@ -176,7 +175,7 @@ struct ConversationView: View {
             // Optimized session switching using SessionManager persistent sessions
             Task {
                 do {
-                    try await sessionStateManager.switchToSession(newValue)
+                    try await sessionRepository.switchToSession(newValue)
                     loadSessionWithSessionManager()
                 } catch {
                     print("⚠️ Failed to switch to session: \(error)")
@@ -242,9 +241,9 @@ struct ConversationView: View {
     }
 
     private func getCurrentSessionName() -> String {
-        // Get session name from SessionStateManager
-        if let session = sessionStateManager.activeSessions.first(where: { $0.sessionId == sessionId }) {
-            return session.sessionName ?? "Untitled"
+        // Get session name from SessionRepository
+        if let session = sessionRepository.sessions.first(where: { $0.sessionId == sessionId }) {
+            return session.sessionName ?? "Untitled Session"
         }
         return "Session"
     }
@@ -252,27 +251,26 @@ struct ConversationView: View {
     // MARK: - SessionManager Integration Methods
 
     private func setupConversationIntegration() {
-        // Initialize ConversationViewModel with SessionStateManager integration
+        // Initialize ConversationViewModel with SessionRepository
         conversationViewModel.setClaudeService(networkManager.claudeService)
-        conversationViewModel.setSessionStateManager(sessionStateManager)
 
-        print("✅ ConversationView SessionManager integration initialized")
+        print("✅ ConversationView SessionRepository integration initialized")
     }
 
     private func loadSessionWithSessionManager() {
-        // Load session using SessionManager with conversation history and context preservation
+        // Load session using SessionRepository with conversation history
         Task {
-            // Ensure SessionStateManager has this session in its active sessions
-            if !sessionStateManager.activeSessions.contains(where: { $0.sessionId == sessionId }) {
-                // Session not in SessionManager cache, trigger load
+            // Ensure SessionRepository has this session
+            if !sessionRepository.sessions.contains(where: { $0.sessionId == sessionId }) {
+                // Session not in cache, trigger load
                 do {
-                    try await sessionStateManager.refreshSessionsFromBackend()
+                    try await sessionRepository.refreshSessionsFromBackend()
                 } catch {
                     print("⚠️ Failed to refresh sessions: \(error)")
                 }
             }
 
-            // Load conversation through enhanced ConversationViewModel with SessionManager context
+            // Load conversation through ConversationViewModel
             conversationViewModel.loadSession(sessionId: sessionId)
         }
     }
@@ -284,11 +282,6 @@ struct ConversationView: View {
 #Preview {
     NavigationView {
         ConversationView(sessionId: "preview-session")
-            .environmentObject(NetworkManager())
-            .environmentObject(SessionListViewModel())
-            .environmentObject(SessionStateManager(
-                claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
-                persistenceService: SessionPersistenceService()
-            ))
+            .previewEnvironment()
     }
 }

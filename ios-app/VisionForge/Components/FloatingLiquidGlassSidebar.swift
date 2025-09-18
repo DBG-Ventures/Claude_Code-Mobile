@@ -12,8 +12,7 @@ import Combine
 struct FloatingLiquidGlassSidebar: View {
     // MARK: - Environment Objects
     @Environment(NetworkManager.self) var networkManager
-    @Environment(SessionListViewModel.self) var sessionViewModel
-    @Environment(SessionStateManager.self) var sessionStateManager
+    @Environment(SessionRepository.self) var sessionRepository
 
     // MARK: - Binding Properties
     @Binding var selectedSessionId: String?
@@ -25,7 +24,7 @@ struct FloatingLiquidGlassSidebar: View {
     @State private var showingNewSessionSheet: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingDeleteAlert: Bool = false
-    @State private var sessionToDelete: SessionResponse?
+    @State private var sessionToDelete: SessionManagerResponse?
     @State private var showingDeleteError: Bool = false
     @State private var deleteErrorMessage: String = ""
 
@@ -104,7 +103,7 @@ struct FloatingLiquidGlassSidebar: View {
                             // Sessions list
                             ScrollView {
                                 LazyVStack(spacing: 8) {
-                                    if sessionViewModel.isLoading {
+                                    if sessionRepository.isLoading {
                                         loadingView
                                     } else if filteredSessions.isEmpty {
                                         emptyStateView
@@ -175,13 +174,9 @@ struct FloatingLiquidGlassSidebar: View {
         }
         .sheet(isPresented: $showingNewSessionSheet) {
             NewSessionSheet()
-                .environmentObject(networkManager)
-                .environmentObject(sessionViewModel)
-                .environmentObject(sessionStateManager)
         }
         .sheet(isPresented: $showingSettings) {
             EditableSettingsView()
-                .environmentObject(networkManager)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -234,7 +229,7 @@ struct FloatingLiquidGlassSidebar: View {
                         .background(Color.blue)
                         .clipShape(Circle())
                 }
-                .disabled(sessionViewModel.isLoading)
+                .disabled(sessionRepository.isLoading)
             }
         }
         .padding(.horizontal, edgePadding)
@@ -349,50 +344,46 @@ struct FloatingLiquidGlassSidebar: View {
     }
 
     // MARK: - Computed Properties
-    private var filteredSessions: [SessionResponse] {
-        let allSessions = combineSessionSources()
+    private var filteredSessions: [SessionManagerResponse] {
+        let allSessions = sessionRepository.sessions
 
         if searchText.isEmpty {
             return allSessions
         } else {
             return allSessions.filter { session in
-                session.sessionName?.localizedCaseInsensitiveContains(searchText) ?? false ||
+                (session.sessionName ?? "").localizedCaseInsensitiveContains(searchText) ||
                 session.sessionId.localizedCaseInsensitiveContains(searchText) ||
-                session.messages.contains { message in
+                (session.conversationHistory?.contains { message in
                     message.content.localizedCaseInsensitiveContains(searchText)
-                }
+                } ?? false)
             }
         }
     }
 
-    // MARK: - Helper Methods
-    private func combineSessionSources() -> [SessionResponse] {
-        let sessionManagerSessions = sessionStateManager.activeSessions.map { sessionManagerSession in
-            convertToSessionResponse(sessionManagerSession)
-        }
-
-        return sessionManagerSessions.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
     private func setupViewModel() {
-        sessionViewModel.setClaudeService(networkManager.claudeService)
-        sessionViewModel.loadSessions()
+        Task {
+            do {
+                _ = try await sessionRepository.getAllSessions()
+            } catch {
+                print("⚠️ Failed to load sessions: \(error)")
+            }
+        }
     }
 
-    private func selectSession(_ session: SessionResponse) {
+    private func selectSession(_ session: SessionManagerResponse) {
         selectedSessionId = session.sessionId
-        sessionViewModel.selectSession(session)
+        sessionRepository.selectSession(session)
     }
 
-    private func deleteSession(_ session: SessionResponse) {
+    private func deleteSession(_ session: SessionManagerResponse) {
         sessionToDelete = session
         showingDeleteAlert = true
     }
 
-    private func deleteSessionAction(_ session: SessionResponse) {
+    private func deleteSessionAction(_ session: SessionManagerResponse) {
         Task {
             do {
-                try await sessionStateManager.deleteSession(session.sessionId)
+                try await sessionRepository.deleteSession(session.sessionId)
                 sessionToDelete = nil
                 if selectedSessionId == session.sessionId {
                     selectedSessionId = nil
@@ -408,10 +399,10 @@ struct FloatingLiquidGlassSidebar: View {
     }
 
     private func refreshSessions() {
-        sessionViewModel.loadSessions()
+        sessionRepository.refreshSessions()
 
         Task {
-            await sessionStateManager.checkSessionManagerConnectionStatus()
+            await sessionRepository.checkSessionManagerConnectionStatus()
         }
     }
 
@@ -421,33 +412,12 @@ struct FloatingLiquidGlassSidebar: View {
         }
     }
 
-    private func convertToSessionResponse(_ sessionManagerResponse: SessionManagerResponse) -> SessionResponse {
-        return SessionResponse(
-            sessionId: sessionManagerResponse.sessionId,
-            userId: sessionManagerResponse.userId,
-            sessionName: sessionManagerResponse.sessionName,
-            status: sessionManagerResponse.status,
-            messages: sessionManagerResponse.conversationHistory?.map { convMessage in
-                ClaudeMessage(
-                    id: convMessage.messageId ?? convMessage.id,
-                    content: convMessage.content,
-                    role: convMessage.role,
-                    timestamp: convMessage.timestamp,
-                    sessionId: sessionManagerResponse.sessionId,
-                    metadata: convMessage.sessionManagerContext ?? [:]
-                )
-            } ?? [],
-            createdAt: sessionManagerResponse.createdAt,
-            updatedAt: sessionManagerResponse.lastActiveAt,
-            messageCount: sessionManagerResponse.messageCount,
-            context: [:]
-        )
-    }
+    // convertToSessionResponse no longer needed - using SessionManagerResponse directly
 }
 
 // MARK: - Floating Session Row
 struct FloatingSessionRow: View {
-    let session: SessionResponse
+    let session: SessionManagerResponse
     let isSelected: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
@@ -462,7 +432,7 @@ struct FloatingSessionRow: View {
             // Session content
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(session.sessionName ?? "Untitled")
+                    Text(session.sessionName ?? "Untitled Session")
                         .font(.body)
                         .fontWeight(isSelected ? .semibold : .regular)
                         .foregroundColor(.primary)
@@ -470,12 +440,12 @@ struct FloatingSessionRow: View {
 
                     Spacer()
 
-                    Text(formatRelativeTime(session.updatedAt))
+                    Text(formatRelativeTime(session.lastActiveAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
 
-                if let lastMessage = session.messages.last {
+                if let lastMessage = session.conversationHistory?.last {
                     Text(lastMessage.content)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -541,11 +511,6 @@ struct FloatingSessionRow: View {
         .ignoresSafeArea()
 
         FloatingLiquidGlassSidebar(selectedSessionId: $selectedSessionId)
-            .environmentObject(NetworkManager())
-            .environmentObject(SessionListViewModel())
-            .environmentObject(SessionStateManager(
-                claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
-                persistenceService: SessionPersistenceService()
-            ))
+            .previewEnvironment()
     }
 }

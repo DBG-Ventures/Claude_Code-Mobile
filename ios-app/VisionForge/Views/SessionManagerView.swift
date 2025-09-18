@@ -10,14 +10,14 @@ import SwiftUI
 import Combine
 
 struct SessionManagerView: View {
-    
+
     // MARK: - State Properties
-    
-    @State private var sessionViewModel = SessionListViewModel()
+
+    @Environment(SessionRepository.self) var sessionRepository
     @Environment(NetworkManager.self) var networkManager
     @State private var showingNewSessionSheet: Bool = false
     @State private var showingDeleteAlert: Bool = false
-    @State private var sessionToDelete: SessionResponse?
+    @State private var sessionToDelete: SessionManagerResponse?
     @State private var searchText: String = ""
     
     // MARK: - Body
@@ -49,14 +49,14 @@ struct SessionManagerView: View {
             }
             .sheet(isPresented: $showingNewSessionSheet) {
                 NewSessionSheet()
-                    .environmentObject(networkManager)
-                    .environmentObject(sessionViewModel)
             }
             .alert("Delete Session", isPresented: $showingDeleteAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     if let session = sessionToDelete {
-                        sessionViewModel.deleteSession(session)
+                        Task {
+                            try? await sessionRepository.deleteSession(session.sessionId)
+                        }
                         sessionToDelete = nil
                     }
                 }
@@ -65,8 +65,13 @@ struct SessionManagerView: View {
             }
         }
         .onAppear {
-            sessionViewModel.setClaudeService(networkManager.claudeService)
-            sessionViewModel.loadSessions()
+            Task {
+                do {
+                    _ = try await sessionRepository.getAllSessions()
+                } catch {
+                    print("⚠️ Failed to load sessions: \(error)")
+                }
+            }
         }
     }
     
@@ -111,21 +116,21 @@ struct SessionManagerView: View {
             StatItem(
                 icon: "message.badge",
                 title: "Total",
-                value: "\(sessionViewModel.sessions.count)",
+                value: "\(sessionRepository.sessions.count)",
                 color: .blue
             )
-            
+
             StatItem(
                 icon: "circle.fill",
-                title: "Active", 
-                value: "\(sessionViewModel.activeSessions.count)",
+                title: "Active",
+                value: "\(sessionRepository.activeSessions.count)",
                 color: .green
             )
-            
+
             StatItem(
                 icon: "clock",
                 title: "Recent",
-                value: "\(sessionViewModel.recentSessions.count)",
+                value: "\(sessionRepository.recentSessions.count)",
                 color: .orange
             )
             
@@ -137,7 +142,7 @@ struct SessionManagerView: View {
     
     private var sessionsListSection: some View {
         Group {
-            if sessionViewModel.isLoading {
+            if sessionRepository.isLoading {
                 loadingView
             } else if filteredSessions.isEmpty {
                 emptyStateView
@@ -224,12 +229,12 @@ struct SessionManagerView: View {
     
     // MARK: - Computed Properties
     
-    private var filteredSessions: [SessionResponse] {
+    private var filteredSessions: [SessionManagerResponse] {
         if searchText.isEmpty {
-            return sessionViewModel.sessions
+            return sessionRepository.sessions
         } else {
-            return sessionViewModel.sessions.filter { session in
-                session.sessionName?.localizedCaseInsensitiveContains(searchText) ?? false ||
+            return sessionRepository.sessions.filter { session in
+                (session.sessionName ?? "").localizedCaseInsensitiveContains(searchText) ||
                 session.sessionId.localizedCaseInsensitiveContains(searchText)
             }
         }
@@ -239,9 +244,9 @@ struct SessionManagerView: View {
 // MARK: - Session Row Component
 
 struct SessionManagerRow: View {
-    let session: SessionResponse
-    let onSelect: (SessionResponse) -> Void
-    let onDelete: (SessionResponse) -> Void
+    let session: SessionManagerResponse
+    let onSelect: (SessionManagerResponse) -> Void
+    let onDelete: (SessionManagerResponse) -> Void
     
     var body: some View {
         HStack(spacing: 16) {
@@ -264,7 +269,7 @@ struct SessionManagerRow: View {
                     
                     Spacer()
                     
-                    Text(formatDate(session.updatedAt))
+                    Text(formatDate(session.lastActiveAt))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -273,7 +278,7 @@ struct SessionManagerRow: View {
                     .font(.body)
                     .foregroundColor(.secondary)
                 
-                if let lastMessage = session.messages.last {
+                if let lastMessage = session.conversationHistory?.last {
                     Text(lastMessage.content)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -369,9 +374,8 @@ struct StatItem: View {
 // MARK: - New Session Sheet
 
 struct NewSessionSheet: View {
-    @Environment(SessionListViewModel.self) var sessionViewModel
+    @Environment(SessionRepository.self) var sessionRepository
     @Environment(NetworkManager.self) var networkManager
-    @Environment(SessionStateManager.self) var sessionStateManager
     @Environment(\.presentationMode) var presentationMode
 
     @State private var sessionName: String = ""
@@ -511,8 +515,8 @@ struct NewSessionSheet: View {
 
         Task {
             do {
-                // Create session using SessionStateManager for proper backend integration
-                let session = try await sessionStateManager.createNewSession(
+                // Create session using SessionRepository
+                let session = try await sessionRepository.createSession(
                     name: sessionName,
                     workingDirectory: workingDir
                 )
@@ -520,14 +524,6 @@ struct NewSessionSheet: View {
                 await MainActor.run {
                     isCreating = false
                     print("✅ Created session: \(session.sessionId)")
-
-                    // Update currentSessionId so ContentView can select it
-                    sessionStateManager.currentSessionId = session.sessionId
-
-                    // Also create via legacy SessionListViewModel for compatibility
-                    sessionViewModel.createNewSession(name: sessionName, workingDirectory: workingDir) { _ in
-                        // No-op, just for compatibility
-                    }
 
                     presentationMode.wrappedValue.dismiss()
                 }
@@ -546,5 +542,5 @@ struct NewSessionSheet: View {
 
 #Preview {
     SessionManagerView()
-        .environmentObject(NetworkManager())
+        .previewEnvironment()
 }
