@@ -35,7 +35,7 @@ struct SessionSidebarView: View {
                 LazyVStack(spacing: 8) {
                     // Top padding to account for floating header with status bar
                     Color.clear
-                        .frame(height: 230) // Space for header + search + status bar
+                        .frame(height: 160) // Space for header + search + status bar
 
                     if sessionViewModel.isLoading {
                         loadingView
@@ -52,48 +52,45 @@ struct SessionSidebarView: View {
                             .padding(.horizontal, 16)
                         }
                     }
-
-                    // Bottom padding to account for floating toolbar
-                    Color.clear
-                        .frame(height: 70)
                 }
-                .padding(.vertical, 12)
             }
-            .background(Color(.systemGroupedBackground))
 
             // Floating glass layer: Header and toolbar
             VStack {
                 // Floating header with glass effect
                 GlassEffectContainer {
                     VStack(spacing: 12) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Claude Code")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
+                        VStack(spacing: 0) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Claude Code")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
 
-                                Text("\(filteredSessions.count) sessions")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    Text("\(filteredSessions.count) sessions")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Button(action: { showingNewSessionSheet = true }) {
+                                    Image(systemName: "plus")
+                                        .font(.title3)
+                                        .foregroundColor(.blue)
+                                        .frame(width: 32, height: 32)
+                                        .glassEffect(.clear.tint(.blue.opacity(0.1)), in: Circle())
+                                }
+                                .disabled(sessionViewModel.isLoading)
                             }
-
-                            Spacer()
-
-                            Button(action: { showingNewSessionSheet = true }) {
-                                Image(systemName: "plus")
-                                    .font(.title3)
-                                    .foregroundColor(.blue)
-                                    .frame(width: 32, height: 32)
-                                    .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
-                            }
-                            .disabled(sessionViewModel.isLoading)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 50)
-
-                        // Connection status indicator
-                        connectionStatusIndicator
                             .padding(.horizontal, 16)
+                            .padding(.top, 50)
+
+                            // Connection status indicator
+                            connectionStatusIndicator
+                                .padding(.horizontal, 16)
+                        }
+                        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8))
 
                         // Search bar
                         searchSection
@@ -120,7 +117,7 @@ struct SessionSidebarView: View {
                             .foregroundColor(.blue)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .glassEffect(.regular.tint(.blue.opacity(0.1)), in: RoundedRectangle(cornerRadius: 8))
+                            .glassEffect(.clear.tint(.blue.opacity(0.1)), in: RoundedRectangle(cornerRadius: 8))
                         }
 
                         // Quick actions menu
@@ -141,7 +138,7 @@ struct SessionSidebarView: View {
                                 .font(.body)
                                 .foregroundColor(.blue)
                                 .frame(width: 44, height: 44)
-                                .glassEffect(.regular.tint(.blue.opacity(0.1)), in: Circle())
+                                .glassEffect(.clear.tint(.blue.opacity(0.1)), in: Circle())
                         }
                     }
                     .padding(.horizontal, 16)
@@ -236,8 +233,6 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Search Section
@@ -248,7 +243,7 @@ struct SessionSidebarView: View {
                 .font(.body)
 
             TextField("Search sessions...", text: $searchText)
-                .textFieldStyle(PlainTextFieldStyle())
+                .textFieldStyle(.plain)
                 .font(.body)
 
             if !searchText.isEmpty {
@@ -261,8 +256,7 @@ struct SessionSidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Loading View

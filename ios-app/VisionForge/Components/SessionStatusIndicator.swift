@@ -288,7 +288,7 @@ struct SessionManagerStatusBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .glassEffect(.regular)
+        .glassEffect(.clear)
     }
 }
 
@@ -324,7 +324,7 @@ struct SessionHealthWidget: View {
             }
         }
         .padding()
-        .glassEffect(.regular)
+        .glassEffect(.clear)
     }
 
     private func healthMetrics(_ stats: SessionManagerStats) -> some View {

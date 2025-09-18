@@ -115,7 +115,7 @@ struct BackendSetupFlow: View {
                 ForEach(SetupStep.allCases, id: \.rawValue) { step in
                     RoundedRectangle(cornerRadius: 2)
                         .frame(height: 4)
-                        .glassEffect(.regular.tint((step.rawValue <= currentStep.rawValue ? Color.blue : Color.gray).opacity(0.6)), in: RoundedRectangle(cornerRadius: 2))
+                        .glassEffect(.clear.tint((step.rawValue <= currentStep.rawValue ? Color.blue : Color.gray).opacity(0.6)), in: RoundedRectangle(cornerRadius: 2))
                 }
             }
 
@@ -477,7 +477,7 @@ struct BackendSetupFlow: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 32)
                     .padding(.vertical, 12)
-                    .glassEffect(.regular.tint(.blue.opacity(0.8)), in: RoundedRectangle(cornerRadius: 12))
+                    .glassEffect(.clear.tint(.blue.opacity(0.8)), in: RoundedRectangle(cornerRadius: 12))
                 }
             }
 

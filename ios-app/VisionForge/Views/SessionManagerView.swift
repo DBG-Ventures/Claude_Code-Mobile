@@ -248,7 +248,7 @@ struct SessionManagerRow: View {
             // Session Icon
             Circle()
                 .frame(width: 44, height: 44)
-                .glassEffect(.regular.tint(statusColor.opacity(0.8)), in: Circle())
+                .glassEffect(.clear.tint(statusColor.opacity(0.8)), in: Circle())
                 .overlay {
                     Image(systemName: statusIcon)
                         .foregroundColor(.white)

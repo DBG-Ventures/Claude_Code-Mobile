@@ -63,7 +63,7 @@ struct MessageBubble: View {
 
             Circle()
                 .frame(width: 32, height: 32)
-                .glassEffect(.regular.tint(avatarColor.opacity(0.8)), in: Circle())
+                .glassEffect(.clear.tint(avatarColor.opacity(0.8)), in: Circle())
                 .overlay {
                     Image(systemName: avatarIcon)
                         .foregroundColor(.white)
@@ -93,7 +93,7 @@ struct MessageBubble: View {
                     .padding(.vertical, bubblePadding.vertical)
             }
         }
-        .glassEffect(.regular.tint(bubbleColor.opacity(0.1)), in: RoundedRectangle(cornerRadius: bubbleCornerRadius))
+        .glassEffect(.clear.tint(bubbleColor.opacity(0.1)), in: RoundedRectangle(cornerRadius: bubbleCornerRadius))
     }
 
     // Native glass background - handled by .glassEffect

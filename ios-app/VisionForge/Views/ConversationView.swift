@@ -36,10 +36,6 @@ struct ConversationView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(spacing: 16) {
-                        // Top padding for floating header (includes status bar)
-                        Color.clear
-                            .frame(height: 110)
-
                         ForEach(conversationViewModel.messages) { message in
                             MessageBubble(
                                 message: message,
@@ -48,10 +44,6 @@ struct ConversationView: View {
                             )
                             .id(message.id)
                         }
-
-                        // Bottom padding for floating input area
-                        Color.clear
-                            .frame(height: 70)
                     }
                     .padding(.horizontal, 20)
                 }
@@ -74,22 +66,16 @@ struct ConversationView: View {
                 // Top header bar with glass effect - anchored to top edge
                 GlassEffectContainer {
                     HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(getCurrentSessionName())
-                                .font(.headline)
-                                .fontWeight(.semibold)
+                        // Left spacer for center alignment
+                        Spacer()
 
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(sessionManagerStatusColor)
-                                    .frame(width: 6, height: 6)
+                        // Centered header component mimicking Messages app
+                        ConversationHeaderView(
+                            sessionName: getCurrentSessionName(),
+                            status: sessionStateManager.sessionManagerStatus
+                        )
 
-                                Text(sessionManagerStatusText)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-
+                        // Right spacer and action button
                         Spacer()
 
                         // Action button with glass effect
@@ -97,16 +83,15 @@ struct ConversationView: View {
                             Image(systemName: "trash")
                                 .font(.body)
                                 .foregroundColor(.secondary)
-                                .frame(width: 32, height: 32)
-                                .glassEffect(.regular.tint(.secondary.opacity(0.1)), in: Circle())
+                                .frame(width: 52, height: 52)
+                                .glassEffect(.clear.tint(.secondary.opacity(0.1)), in: Circle())
                         }
                         .disabled(conversationViewModel.messages.isEmpty)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, 50) // Account for status bar
                     .padding(.bottom, 12)
+                    .padding(.top, 30)
                 }
-                .glassEffect(.regular, in: Rectangle())
                 .ignoresSafeArea(edges: .top)
 
                 // Error banner (appears above input when needed)
@@ -150,7 +135,7 @@ struct ConversationView: View {
                                 .padding(.vertical, 10)
                         }
                         .glassEffect(
-                            .regular.tint(Color(.systemGray5).opacity(0.2)),
+                            .clear.tint(Color(.systemGray5).opacity(0.2)),
                             in: RoundedRectangle(cornerRadius: 20)
                         )
                         .onSubmit {
@@ -170,7 +155,7 @@ struct ConversationView: View {
                                         .fill(canSendMessage ? Color.blue : Color.clear)
                                 )
                                 .glassEffect(
-                                    canSendMessage ? .regular.tint(.blue.opacity(0.1)) : .regular,
+                                    canSendMessage ? .clear.tint(.blue.opacity(0.1)) : .regular,
                                     in: Circle()
                                 )
                         }
@@ -238,35 +223,6 @@ struct ConversationView: View {
                networkManager.isNetworkAvailable
     }
 
-    private var sessionManagerStatusColor: Color {
-        switch sessionStateManager.sessionManagerStatus {
-        case .connected:
-            return .green
-        case .connecting:
-            return .orange
-        case .disconnected:
-            return .red
-        case .degraded:
-            return .yellow
-        case .error:
-            return .red
-        }
-    }
-
-    private var sessionManagerStatusText: String {
-        switch sessionStateManager.sessionManagerStatus {
-        case .connected:
-            return "Connected"
-        case .connecting:
-            return "Connecting"
-        case .disconnected:
-            return "Disconnected"
-        case .degraded:
-            return "Degraded"
-        case .error:
-            return "Error"
-        }
-    }
 
     // MARK: - Actions
 

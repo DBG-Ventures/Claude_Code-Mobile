@@ -12,6 +12,7 @@ struct VisionForgeApp: App {
     @StateObject private var networkManager: NetworkManager
     @StateObject private var sessionPersistenceService = SessionPersistenceService()
     @StateObject private var sessionStateManager: SessionStateManager
+    @StateObject private var sessionListViewModel = SessionListViewModel()
 
     init() {
 
@@ -42,6 +43,7 @@ struct VisionForgeApp: App {
                 .environmentObject(networkManager)
                 .environmentObject(sessionPersistenceService)
                 .environmentObject(sessionStateManager)
+                .environmentObject(sessionListViewModel)
                 .onAppear {
                     restoreSessionsOnLaunch()
                 }
@@ -55,9 +57,6 @@ struct VisionForgeApp: App {
                 await networkManager.updateConfiguration(savedConfig)
             }
 
-            // NOTE: Session restoration moved to SessionPersistenceService (CoreData)
-            // SessionManager handles session persistence
-
             // Connect to backend if configuration exists
             if networkManager.activeConfig.baseURL != nil {
                 do {
@@ -70,9 +69,6 @@ struct VisionForgeApp: App {
                     print("⚠️ Failed to restore connection: \(error)")
                 }
             }
-
-            // NOTE: Session cleanup moved to SessionPersistenceService (CoreData)
-            // Cleanup handled by SessionManager
         }
     }
 }

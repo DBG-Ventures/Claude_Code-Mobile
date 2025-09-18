@@ -15,7 +15,7 @@ struct ContentView: View {
     @EnvironmentObject var networkManager: NetworkManager
     @EnvironmentObject var sessionPersistenceService: SessionPersistenceService
     @EnvironmentObject var sessionStateManager: SessionStateManager
-    @StateObject private var sessionListViewModel = SessionListViewModel()
+    @EnvironmentObject var sessionListViewModel: SessionListViewModel
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
@@ -83,7 +83,6 @@ struct ContentView: View {
 
     private var backendSetupView: some View {
         BackendSetupFlow()
-            .environmentObject(networkManager)
             .onReceive(NotificationCenter.default.publisher(for: .setupCompleted)) { _ in
                 checkBackendConfiguration()
             }
@@ -95,18 +94,12 @@ struct ContentView: View {
         NavigationSplitView {
             // Sidebar: Session management and navigation with SessionManager integration
             SessionSidebarView(selectedSessionId: $selectedSessionId)
-                .environmentObject(networkManager)
-                .environmentObject(sessionListViewModel)
-                .environmentObject(sessionStateManager)  // NEW: SessionManager integration
                 .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 450)
         } detail: {
             // Detail: Current conversation with SessionManager session context
             Group {
                 if let sessionId = selectedSessionId {
                     ConversationView(sessionId: sessionId)
-                        .environmentObject(networkManager)
-                        .environmentObject(sessionListViewModel)
-                        .environmentObject(sessionStateManager)  // NEW: SessionManager integration
                         .id(sessionId)  // Force view refresh when session changes
                 } else {
                     conversationEmptyState
@@ -120,9 +113,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewSessionSheet) {
             NewSessionSheet()
-                .environmentObject(networkManager)
-                .environmentObject(sessionListViewModel)
-                .environmentObject(sessionStateManager)
                 .onDisappear {
                     // Select the newly created session if one was created
                     if let newSessionId = sessionStateManager.currentSessionId {
