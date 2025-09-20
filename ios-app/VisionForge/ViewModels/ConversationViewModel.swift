@@ -29,7 +29,8 @@ class ConversationViewModel {
     // MARK: - Private Properties
 
     private var claudeService: ClaudeService?
-    private var sessionStateObserver: Task<Void, Never>?
+    private var repository: SessionRepository?
+    private var repositoryObserver: Task<Void, Never>?
     private var streamingContinuation: Task<Void, Never>?
     private var currentSessionId: String?
 
@@ -62,10 +63,38 @@ class ConversationViewModel {
     
     func setClaudeService(_ service: ClaudeService) {
         self.claudeService = service
-        // Session management now handled by SessionManager
     }
 
-    // SessionStateManager functionality now handled by SessionRepository
+    func setRepository(_ repository: SessionRepository) {
+        self.repository = repository
+        setupRepositoryObservation()
+    }
+
+    private func setupRepositoryObservation() {
+        repositoryObserver?.cancel()
+        repositoryObserver = Task { @MainActor in
+            guard let repository else { return }
+
+            while !Task.isCancelled {
+                withObservationTracking {
+                    // Observe repository changes
+                    self.sessionManagerStatus = repository.sessionManagerStatus
+
+                    // Auto-switch to new session if repository's current session changes
+                    if let repoSessionId = repository.currentSessionId,
+                       repoSessionId != self.currentSessionId {
+                        self.handleSessionChange(repoSessionId)
+                    }
+                } onChange: {
+                    Task { @MainActor in
+                        // Changes detected, loop will continue
+                    }
+                }
+
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            }
+        }
+    }
     
     func sendMessage(_ content: String) {
         sendMessageWithSessionManager(content)
@@ -98,9 +127,8 @@ class ConversationViewModel {
         // Save message to conversation history
         let conversationMessage = ConversationMessage.from(userMessage)
         Task {
-            // TODO: SessionRepository integration for conversation persistence
-            // await sessionRepository.saveConversationMessage(conversationMessage)
-            // await sessionRepository.updateSessionActivity(currentSessionManager.sessionId)
+            await repository?.saveConversationMessage(conversationMessage)
+            await repository?.updateSessionActivity(currentSessionManager.sessionId)
         }
 
         // Start streaming Claude's response with SessionManager
@@ -288,7 +316,6 @@ class ConversationViewModel {
             await MainActor.run {
                 self.currentSession = sessionResponse
 
-                // SessionStateManager functionality now handled by SessionRepository
                 // Convert SessionResponse to SessionManagerResponse for compatibility
                 let sessionManagerResponse = SessionManagerResponse(
                     sessionId: sessionResponse.sessionId,
@@ -347,8 +374,8 @@ class ConversationViewModel {
     }
 
     private func setupSessionStateObservers() {
-        // SessionStateManager functionality now handled by SessionRepository
-        // This method is kept for compatibility but no longer used
+        // This method is deprecated and no longer used
+        // Repository observation is handled in setupRepositoryObservation()
     }
 
     private func handleSessionChange(_ sessionId: String) {
@@ -359,21 +386,95 @@ class ConversationViewModel {
     }
 
     private func createInitialSessionWithManager() {
-        // SessionStateManager functionality now handled by SessionRepository
-        print("⚠️ ConversationViewModel: SessionStateManager integration removed")
-        // TODO: Integrate with SessionRepository for session creation
+        guard let repository else {
+            print("⚠️ ConversationViewModel: Repository not set")
+            return
+        }
+
+        Task {
+            do {
+                let session = try await repository.createSession(
+                    name: "Mobile Chat Session",
+                    workingDirectory: nil
+                )
+
+                self.currentSessionManager = session
+                self.currentSessionId = session.sessionId
+                print("✅ Created new session via Repository: \(session.sessionId)")
+            } catch {
+                self.setError(ErrorResponse(
+                    error: "session_creation_failed",
+                    message: "Failed to create session: \(error.localizedDescription)",
+                    details: nil,
+                    timestamp: Date(),
+                    requestId: nil
+                ))
+            }
+        }
     }
 
     private func loadSessionWithManager(sessionId: String) {
-        // TODO: Implement with SessionRepository
-        print("⚠️ loadSessionWithManager: SessionRepository integration needed")
-        return
+        guard let repository else {
+            print("⚠️ loadSessionWithManager: Repository not set")
+            return
+        }
+
+        Task {
+            do {
+                // Switch to the session in repository
+                try await repository.switchToSession(sessionId)
+
+                // Get the session from repository
+                if let session = try await repository.getSession(sessionId) {
+                    self.currentSessionManager = session
+                    self.currentSessionId = sessionId
+
+                    // Load conversation history
+                    await loadConversationHistoryFromSessionManager(sessionId: sessionId)
+
+                    print("✅ Loaded session from Repository: \(sessionId)")
+                }
+            } catch {
+                print("⚠️ Failed to load session \(sessionId): \(error)")
+                self.setError(ErrorResponse(
+                    error: "session_load_failed",
+                    message: "Failed to load session: \(error.localizedDescription)",
+                    details: nil,
+                    timestamp: Date(),
+                    requestId: nil
+                ))
+            }
+        }
     }
 
     private func loadConversationHistoryFromSessionManager(sessionId: String) async {
-        // TODO: Implement with SessionRepository
-        print("⚠️ loadConversationHistoryFromSessionManager: SessionRepository integration needed")
-        return
+        guard let repository else {
+            print("⚠️ loadConversationHistoryFromSessionManager: Repository not set")
+            return
+        }
+
+        do {
+            // Load conversation history from repository
+            let history = try await repository.loadConversationHistory(for: sessionId)
+
+            await MainActor.run {
+                // Convert ConversationMessage to ClaudeMessage
+                self.messages = history.map { message in
+                    ClaudeMessage(
+                        id: message.id,
+                        content: message.content,
+                        role: message.role,
+                        timestamp: message.timestamp ?? Date(),
+                        sessionId: sessionId,
+                        metadata: message.metadata
+                    )
+                }
+
+                print("✅ Loaded \(history.count) messages from Repository for session \(sessionId)")
+            }
+        } catch {
+            print("⚠️ Failed to load conversation history: \(error)")
+        }
     }
 
     private func startStreamingResponseWithSessionManager(query: String, sessionId: String) {
@@ -423,10 +524,10 @@ class ConversationViewModel {
                             self.isStreaming = false
                             self.streamingMessageId = nil
 
-                            // TODO: SessionRepository integration for session activity tracking
-                            // Task {
-                            //     await self.sessionRepository?.updateSessionActivity(sessionId)
-                            // }
+                            // Update session activity in repository
+                            Task {
+                                await self.repository?.updateSessionActivity(sessionId)
+                            }
                         }
 
                     case .error:

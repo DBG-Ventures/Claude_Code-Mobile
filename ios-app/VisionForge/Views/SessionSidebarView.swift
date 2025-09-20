@@ -509,8 +509,7 @@ struct SessionRow: View {
     NavigationSplitView {
         SessionSidebarView(selectedSessionId: $selectedSessionId)
             .environment(NetworkManager())
-            .environment(SessionListViewModel())
-            .environment(SessionStateManager(
+            .environment(SessionRepository(
                 claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
                 persistenceService: SessionPersistenceService()
             ))

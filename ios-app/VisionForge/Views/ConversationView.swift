@@ -253,6 +253,7 @@ struct ConversationView: View {
     private func setupConversationIntegration() {
         // Initialize ConversationViewModel with SessionRepository
         conversationViewModel.setClaudeService(networkManager.claudeService)
+        conversationViewModel.setRepository(sessionRepository)
 
         print("✅ ConversationView SessionRepository integration initialized")
     }
