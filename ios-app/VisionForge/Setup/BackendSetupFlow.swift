@@ -19,11 +19,12 @@ struct BackendSetupFlow: View {
 
     // MARK: - State Properties
 
-    @State private var validator = ConfigurationValidator()
+    @StateObject private var validator = ConfigurationValidator()
     @State private var currentStep: SetupStep = .welcome
     @State private var configuration = BackendConfigBuilder()
     @State private var isCompleting = false
     @State private var setupComplete = false
+    @State private var selectedTab: String = "local" // Track selected tab explicitly
 
     // MARK: - Setup Steps
 
@@ -89,6 +90,9 @@ struct BackendSetupFlow: View {
             .navigationBarHidden(true)
             .onAppear {
                 validator.clearValidation()
+                // Start with Local Development selected by default
+                selectedTab = "local"
+                configuration.applyLocalDevelopment()
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -238,8 +242,9 @@ struct BackendSetupFlow: View {
                     title: "Local Development",
                     subtitle: "localhost:8000",
                     icon: "laptop",
-                    isSelected: configuration.isLocalDevelopment
+                    isSelected: selectedTab == "local"
                 ) {
+                    selectedTab = "local"
                     configuration.applyLocalDevelopment()
                     validateCurrentConfiguration()
                 }
@@ -248,9 +253,13 @@ struct BackendSetupFlow: View {
                     title: "Custom Server",
                     subtitle: "Configure manually",
                     icon: "server.rack",
-                    isSelected: !configuration.isLocalDevelopment
+                    isSelected: selectedTab == "custom"
                 ) {
-                    configuration.clearToCustom()
+                    selectedTab = "custom"
+                    // Only clear if we're switching from local to custom and have localhost values
+                    if configuration.host == "localhost" || configuration.host.isEmpty {
+                        configuration.clearToCustom()
+                    }
                     validateCurrentConfiguration()
                 }
             }
@@ -462,6 +471,10 @@ struct BackendSetupFlow: View {
                             .font(.body)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
+
+                        Text("URL: \(configuration.build().displayURL)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
             }
@@ -641,6 +654,10 @@ struct BackendSetupFlow: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             if let nextStep = SetupStep(rawValue: currentStep.rawValue + 1) {
                 currentStep = nextStep
+                // Clear previous test results when entering connection test step
+                if nextStep == .connectionTest {
+                    validator.lastHealthCheckResult = nil
+                }
             }
         }
     }
@@ -660,8 +677,24 @@ struct BackendSetupFlow: View {
 
     private func performConnectionTest() {
         let config = configuration.build()
-        Task {
+        print("🔗 Starting connection test to: \(config.displayURL)")
+
+        Task { @MainActor in
+            // Clear previous result first
+            validator.lastHealthCheckResult = nil
+
+            // Perform the health check
             await validator.performHealthCheck(for: config)
+
+            // Log the result for debugging
+            if let result = validator.lastHealthCheckResult {
+                print("✅ Health check completed: \(result.isHealthy ? "Success" : "Failed")")
+                if let error = result.errorMessage {
+                    print("❌ Error: \(error)")
+                }
+            } else {
+                print("⚠️ No health check result received")
+            }
         }
     }
 
@@ -694,8 +727,8 @@ struct BackendSetupFlow: View {
 // MARK: - Configuration Builder
 
 class BackendConfigBuilder: ObservableObject {
-    @Published var name: String = ""
-    @Published var host: String = ""
+    @Published var name: String = "Local Development"
+    @Published var host: String = "localhost"
     @Published var port: Int = 8000
     @Published var scheme: String = "http"
     @Published var timeout: Double = 30.0
@@ -713,8 +746,11 @@ class BackendConfigBuilder: ObservableObject {
     }
 
     func clearToCustom() {
-        name = ""
-        host = ""
+        name = "Custom Server"
+        // Don't clear host if it's already set to something other than localhost
+        if host == "localhost" || host == "127.0.0.1" {
+            host = ""
+        }
         port = 8000
         scheme = "http"
         timeout = 30.0

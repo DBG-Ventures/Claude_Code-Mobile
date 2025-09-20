@@ -44,13 +44,22 @@ class NetworkManager {
         self.activeConfig = initialConfig
         self.pathMonitor = NWPathMonitor()
 
-        // Initialize Claude service with config
-        if let baseURL = initialConfig.baseURL {
-            self.claudeService = ClaudeService(baseURL: baseURL)
-        } else {
-            // This shouldn't happen with valid config
-            self.claudeService = ClaudeService(baseURL: URL(string: "http://localhost:8000")!)
-        }
+        // Initialize Claude service with proper dependencies
+        let baseURL = initialConfig.baseURL ?? URL(string: "http://localhost:8000")!
+        let networkClient = ClaudeNetworkClient(baseURL: baseURL)
+        let sessionDataSource = SessionAPIClient(networkClient: networkClient)
+        let streamingService = ClaudeStreamingService(networkClient: networkClient)
+        let queryService = ClaudeQueryService(
+            networkClient: networkClient,
+            streamingService: streamingService
+        )
+
+        self.claudeService = ClaudeService(
+            networkClient: networkClient,
+            sessionDataSource: sessionDataSource,
+            streamingService: streamingService,
+            queryService: queryService
+        )
 
         setupNetworkMonitoring()
         startMonitoring()
@@ -141,7 +150,21 @@ class NetworkManager {
             return
         }
 
-        claudeService = ClaudeService(baseURL: baseURL)
+        // Recreate Claude service with new URL
+        let networkClient = ClaudeNetworkClient(baseURL: baseURL)
+        let sessionDataSource = SessionAPIClient(networkClient: networkClient)
+        let streamingService = ClaudeStreamingService(networkClient: networkClient)
+        let queryService = ClaudeQueryService(
+            networkClient: networkClient,
+            streamingService: streamingService
+        )
+
+        claudeService = ClaudeService(
+            networkClient: networkClient,
+            sessionDataSource: sessionDataSource,
+            streamingService: streamingService,
+            queryService: queryService
+        )
 
         // Reconnect if network is available
         if isNetworkAvailable {

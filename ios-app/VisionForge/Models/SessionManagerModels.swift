@@ -192,29 +192,26 @@ struct ConversationMessage: Identifiable, Codable, Hashable {
 }
 
 /// SessionManager statistics for monitoring and debugging
-/// Provides real-time information about session manager health and performance
+/// Session manager statistics from backend's session-manager/stats endpoint
 struct SessionManagerStats: Codable, Hashable {
     let activeSessions: Int
-    let totalSessionsCreated: Int
-    let memoryUsageMB: Float
-    let cleanupLastRun: Date
     let sessionTimeoutSeconds: Int
+    let cleanupIntervalSeconds: Int
+    let cleanupTaskRunning: Bool
+    let timestamp: String
+    let oldestSessionAgeSeconds: Double?
+    let newestSessionAgeSeconds: Double?
+    let averageSessionAgeSeconds: Double?
 
     enum CodingKeys: String, CodingKey {
         case activeSessions = "active_sessions"
-        case totalSessionsCreated = "total_sessions_created"
-        case memoryUsageMB = "memory_usage_mb"
-        case cleanupLastRun = "cleanup_last_run"
         case sessionTimeoutSeconds = "session_timeout_seconds"
-    }
-
-    init(activeSessions: Int, totalSessionsCreated: Int, memoryUsageMB: Float,
-         cleanupLastRun: Date, sessionTimeoutSeconds: Int) {
-        self.activeSessions = activeSessions
-        self.totalSessionsCreated = totalSessionsCreated
-        self.memoryUsageMB = memoryUsageMB
-        self.cleanupLastRun = cleanupLastRun
-        self.sessionTimeoutSeconds = sessionTimeoutSeconds
+        case cleanupIntervalSeconds = "cleanup_interval_seconds"
+        case cleanupTaskRunning = "cleanup_task_running"
+        case timestamp
+        case oldestSessionAgeSeconds = "oldest_session_age_seconds"
+        case newestSessionAgeSeconds = "newest_session_age_seconds"
+        case averageSessionAgeSeconds = "average_session_age_seconds"
     }
 }
 
@@ -329,31 +326,6 @@ struct SessionManagerListResponse: Codable {
     }
 }
 
-/// SessionManager health response with detailed status information
-struct SessionManagerHealthResponse: Codable {
-    let sessionManagerAvailable: Bool
-    let activeSessions: Int
-    let memoryUsageMB: Float
-    let lastCleanupRun: Date?
-    let connectionStatus: String
-
-    enum CodingKeys: String, CodingKey {
-        case sessionManagerAvailable = "session_manager_available"
-        case activeSessions = "active_sessions"
-        case memoryUsageMB = "memory_usage_mb"
-        case lastCleanupRun = "last_cleanup_run"
-        case connectionStatus = "connection_status"
-    }
-
-    init(sessionManagerAvailable: Bool, activeSessions: Int, memoryUsageMB: Float,
-         lastCleanupRun: Date? = nil, connectionStatus: String = "unknown") {
-        self.sessionManagerAvailable = sessionManagerAvailable
-        self.activeSessions = activeSessions
-        self.memoryUsageMB = memoryUsageMB
-        self.lastCleanupRun = lastCleanupRun
-        self.connectionStatus = connectionStatus
-    }
-}
 
 // MARK: - Supporting Types
 
@@ -434,8 +406,8 @@ extension SessionManagerResponse {
             context: sessionManagerStats.map { stats in
                 [
                     "active_sessions": .int(stats.activeSessions),
-                    "memory_usage_mb": .double(Double(stats.memoryUsageMB)),
-                    "session_timeout_seconds": .int(stats.sessionTimeoutSeconds)
+                    "session_timeout_seconds": .int(stats.sessionTimeoutSeconds),
+                    "cleanup_task_running": .bool(stats.cleanupTaskRunning)
                 ]
             } ?? [:]
         )
@@ -489,14 +461,17 @@ extension Array where Element == SessionManagerResponse {
 }
 
 extension SessionManagerStats {
-    /// Check if memory usage is within acceptable limits
-    var isMemoryUsageHealthy: Bool {
-        return memoryUsageMB < 500.0 // Alert if over 500MB
+    /// Check if cleanup task is running efficiently
+    var isCleanupHealthy: Bool {
+        return cleanupTaskRunning == false // Healthy when not constantly cleaning
     }
 
-    /// Calculate cleanup efficiency
-    var cleanupEfficiency: Double {
-        guard totalSessionsCreated > 0 else { return 1.0 }
-        return Double(totalSessionsCreated - activeSessions) / Double(totalSessionsCreated)
+    /// Get session age summary if available
+    var sessionAgeSummary: String? {
+        guard let oldest = oldestSessionAgeSeconds,
+              let newest = newestSessionAgeSeconds else {
+            return nil
+        }
+        return "Sessions: \(Int(newest))s - \(Int(oldest))s old"
     }
 }

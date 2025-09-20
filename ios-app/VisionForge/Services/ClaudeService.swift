@@ -1,9 +1,9 @@
 //
 //  ClaudeService.swift
-//  HTTP client for FastAPI backend communication.
+//  Facade for coordinating Claude API operations using modular services
 //
-//  Provides comprehensive HTTP/WebSocket client for Claude Code mobile backend.
-//  Handles real-time streaming, session management, and mobile lifecycle events.
+//  Refactored to use dependency injection and delegate operations to specialized services.
+//  Maintains ClaudeServiceProtocol compatibility while using clean architecture.
 //
 
 import Foundation
@@ -34,33 +34,15 @@ protocol ClaudeServiceProtocol: AnyObject {
     func checkHealth() async throws -> Bool
 }
 
-// MARK: - Connection Status
+// MARK: - Connection Status moved to ClaudeServiceModels.swift
 
-enum ConnectionStatus: Equatable {
-    case disconnected
-    case connecting
-    case connected
-    case error(String)
-
-    var sessionManagerStatus: SessionManagerConnectionStatus {
-        switch self {
-        case .disconnected:
-            return .disconnected
-        case .connecting:
-            return .connecting
-        case .connected:
-            return .connected
-        case .error:
-            return .error
-        }
-    }
-}
+// MARK: - Service Interfaces imported from dedicated protocol files
 
 // MARK: - Claude Service Implementation
 
 @MainActor
 @Observable
-class ClaudeService: NSObject, ClaudeServiceProtocol {
+final class ClaudeService: NSObject, ClaudeServiceProtocol {
 
     // MARK: - Observable Properties
 
@@ -70,48 +52,37 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     var lastError: ErrorResponse?
     var sessionManagerStats: SessionManagerStats?
 
-    // MARK: - Private Properties
+    // MARK: - Service Dependencies
+
+    private let networkClient: NetworkClientProtocol
+    private let sessionDataSource: SessionDataSourceProtocol
+
+    /// Expose sessionDataSource for dependency injection in other services
+    var sessionAPIClient: SessionDataSourceProtocol {
+        return sessionDataSource
+    }
+    private let streamingService: ClaudeStreamingServiceProtocol
+    private let queryService: ClaudeQueryServiceProtocol
+
+    // MARK: - Legacy Properties (temporary for backwards compatibility)
 
     private let baseURL: URL
-    private let session: URLSession
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
-
-    // Lifecycle management
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var lifecycleObservers: [NSObjectProtocol] = []
 
-    // Retry configuration
-    private let maxRetryAttempts = 3
-    private let baseRetryDelay: TimeInterval = 1.0
-    private let maxRetryDelay: TimeInterval = 30.0
-
     // MARK: - Initialization
 
-    init(baseURL: URL) {
-        self.baseURL = baseURL
-
-        // Configure URLSession with mobile optimizations for long-running tasks
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 300.0  // 5 minutes for requests
-        configuration.timeoutIntervalForResource = 600.0 // 10 minutes for resources
-        configuration.waitsForConnectivity = true
-        configuration.allowsCellularAccess = true
-        configuration.allowsExpensiveNetworkAccess = true
-        configuration.allowsConstrainedNetworkAccess = true
-
-        self.session = URLSession(configuration: configuration)
-
-        // Configure JSON coders with date formatting
-        self.encoder = JSONEncoder()
-        self.decoder = JSONDecoder()
-
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'"
-        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-
-        encoder.dateEncodingStrategy = .formatted(dateFormatter)
-        decoder.dateDecodingStrategy = .formatted(dateFormatter)
+    init(
+        networkClient: NetworkClientProtocol,
+        sessionDataSource: SessionDataSourceProtocol,
+        streamingService: ClaudeStreamingServiceProtocol,
+        queryService: ClaudeQueryServiceProtocol
+    ) {
+        self.networkClient = networkClient
+        self.sessionDataSource = sessionDataSource
+        self.streamingService = streamingService
+        self.queryService = queryService
+        self.baseURL = networkClient.baseURL
 
         super.init()
 
@@ -185,14 +156,10 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
         connectionStatus = .connecting
 
         do {
-            let isHealthy = try await checkHealth()
-            if isHealthy {
-                isConnected = true
-                connectionStatus = .connected
-                print("✅ Claude service connected successfully")
-            } else {
-                throw ClaudeServiceError.healthCheckFailed
-            }
+            try await networkClient.connect()
+            isConnected = networkClient.isConnected
+            connectionStatus = .connected
+            print("✅ Claude service connected successfully")
         } catch {
             isConnected = false
             connectionStatus = .error(error.localizedDescription)
@@ -201,6 +168,7 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     }
 
     func disconnect() async {
+        await networkClient.disconnect()
         isConnected = false
         connectionStatus = .disconnected
         endBackgroundTask()
@@ -208,376 +176,82 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     }
 
     func checkHealth() async throws -> Bool {
-        let healthURL = baseURL.appendingPathComponent("health")
-        let (data, response) = try await session.data(from: healthURL)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            return false
-        }
-        
-        // Parse health response
-        let healthResponse = try decoder.decode(HealthResponse.self, from: data)
-        return healthResponse.status == "healthy"
+        return try await networkClient.checkHealth()
     }
 
     // MARK: - Session Management
 
     func createSession(request: SessionRequest) async throws -> SessionResponse {
-        let url = baseURL.appendingPathComponent("claude/sessions")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestData = try encoder.encode(request)
-        urlRequest.httpBody = requestData
-        
-        let (data, response) = try await session.data(for: urlRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-        
-        if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-            return try decoder.decode(SessionResponse.self, from: data)
-        } else {
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "Unknown error")
-        }
+        return try await sessionDataSource.createSession(request)
     }
 
     func getSession(sessionId: String, userId: String) async throws -> SessionResponse {
-        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions/\(sessionId)"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "user_id", value: userId)
-        ]
-
-        guard let url = components.url else {
-            throw ClaudeServiceError.invalidURL
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200:
-            return try decoder.decode(SessionResponse.self, from: data)
-        case 404:
-            throw ClaudeServiceError.sessionNotFound
-        default:
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
-        }
+        return try await sessionDataSource.getSession(sessionId: sessionId, userId: userId)
     }
 
     func getSessions(request: SessionListRequest) async throws -> SessionListResponse {
-        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "user_id", value: request.userId),
-            URLQueryItem(name: "limit", value: String(request.limit)),
-            URLQueryItem(name: "offset", value: String(request.offset))
-        ]
-
-        guard let url = components.url else {
-            throw ClaudeServiceError.invalidURL
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        return try decoder.decode(SessionListResponse.self, from: data)
+        return try await sessionDataSource.getSessions(request)
     }
 
     func deleteSession(sessionId: String, userId: String = "mobile-user") async throws {
-        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions/\(sessionId)"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "user_id", value: userId)
-        ]
-
-        guard let url = components.url else {
-            throw ClaudeServiceError.invalidURL
-        }
-
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "DELETE"
-
-        let (_, response) = try await session.data(for: urlRequest)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        if httpResponse.statusCode != 200 && httpResponse.statusCode != 204 {
-            throw ClaudeServiceError.serverError("Failed to delete session")
-        }
+        try await sessionDataSource.deleteSession(sessionId: sessionId, userId: userId)
     }
 
     // MARK: - Enhanced SessionManager Integration
 
     func createSessionWithManager(request: EnhancedSessionRequest) async throws -> SessionManagerResponse {
-        print("🔍 ClaudeService: createSessionWithManager called")
-        print("🔍 ClaudeService: Base URL: \(baseURL)")
-        let url = baseURL.appendingPathComponent("claude/sessions")
-        print("🔍 ClaudeService: Full URL: \(url)")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let requestData = try encoder.encode(request)
-        urlRequest.httpBody = requestData
-        print("🔍 ClaudeService: Request body size: \(requestData.count) bytes")
-
-        print("🔍 ClaudeService: Making HTTP request to backend...")
-        let (data, response) = try await session.data(for: urlRequest)
-        print("🔍 ClaudeService: Received response from backend")
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200, 201:
-            let sessionManagerResponse = try decoder.decode(SessionManagerResponse.self, from: data)
+        do {
+            let response = try await sessionDataSource.createSessionWithManager(request)
             await updateSessionManagerConnectionStatus(.connected)
-            return sessionManagerResponse
-        case 404:
+            return response
+        } catch {
             await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.sessionManagerUnavailable
-        default:
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
-            await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+            throw error
         }
     }
 
     func getSessionWithManager(sessionId: String, userId: String, includeHistory: Bool = true) async throws -> SessionManagerResponse? {
-        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions/\(sessionId)"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "user_id", value: userId),
-            URLQueryItem(name: "include_history", value: String(includeHistory))
-        ]
-
-        guard let url = components.url else {
-            throw ClaudeServiceError.invalidURL
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200:
-            let sessionManagerResponse = try decoder.decode(SessionManagerResponse.self, from: data)
+        do {
+            let response = try await sessionDataSource.getSessionWithManager(
+                sessionId: sessionId,
+                userId: userId,
+                includeHistory: includeHistory
+            )
             await updateSessionManagerConnectionStatus(.connected)
-            return sessionManagerResponse
-        case 404:
-            await updateSessionManagerConnectionStatus(.connected) // SessionManager is available, session just not found
-            return nil
-        default:
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
+            return response
+        } catch {
+            if case ClaudeServiceError.sessionNotFound = error {
+                await updateSessionManagerConnectionStatus(.connected)
+                return nil
+            }
             await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+            throw error
         }
     }
 
     func getSessionsWithManager(request: SessionListRequest) async throws -> SessionListResponse {
-        var components = URLComponents(url: baseURL.appendingPathComponent("claude/sessions"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "user_id", value: request.userId),
-            URLQueryItem(name: "limit", value: String(request.limit)),
-            URLQueryItem(name: "offset", value: String(request.offset))
-        ]
-
-        if let statusFilter = request.statusFilter {
-            components.queryItems?.append(URLQueryItem(name: "status_filter", value: statusFilter))
-        }
-
-        guard let url = components.url else {
-            throw ClaudeServiceError.invalidURL
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200:
-            let sessionListResponse = try decoder.decode(SessionListResponse.self, from: data)
+        do {
+            let response = try await sessionDataSource.getSessionsWithManager(request)
             await updateSessionManagerConnectionStatus(.connected)
-
-            // TODO: Update local session manager stats if available in future API version
-            // SessionListResponse currently doesn't include sessionManagerStats
-
-            return sessionListResponse
-        case 404:
+            return response
+        } catch {
             await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.sessionManagerUnavailable
-        default:
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
-            await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+            throw error
         }
     }
 
     func streamQueryWithSessionManager(request: ClaudeQueryRequest) -> AsyncThrowingStream<StreamingChunk, Error> {
-        return AsyncThrowingStream { continuation in
-            Task {
-                await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: 0)
-            }
-        }
-    }
-
-    private func streamQueryWithSessionManagerRetry(
-        request: ClaudeQueryRequest,
-        continuation: AsyncThrowingStream<StreamingChunk, Error>.Continuation,
-        attempt: Int
-    ) async {
-        do {
-            let url = baseURL.appendingPathComponent("claude/stream")
-            var urlRequest = URLRequest(url: url)
-            urlRequest.httpMethod = "POST"
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-            urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-            let requestData = try encoder.encode(request)
-            urlRequest.httpBody = requestData
-
-            let (asyncBytes, response) = try await session.bytes(for: urlRequest)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ClaudeServiceError.invalidResponse
-            }
-
-            // Handle SessionManager-specific errors
-            if httpResponse.statusCode == 404 {
-                await updateSessionManagerConnectionStatus(.error)
-                continuation.finish(throwing: ClaudeServiceError.sessionManagerUnavailable)
-                return
-            }
-
-            // Handle rate limiting and server errors with retry
-            if httpResponse.statusCode == 429 || (500...599).contains(httpResponse.statusCode) {
-                if attempt < maxRetryAttempts {
-                    let delay = calculateRetryDelay(attempt: attempt, statusCode: httpResponse.statusCode)
-                    print("⚠️ SessionManager stream request failed with status \(httpResponse.statusCode), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
-                    return
-                } else {
-                    await updateSessionManagerConnectionStatus(.error)
-                    continuation.finish(throwing: ClaudeServiceError.serverError("Max retry attempts reached after status \(httpResponse.statusCode)"))
-                    return
-                }
-            }
-
-            guard httpResponse.statusCode == 200 else {
-                await updateSessionManagerConnectionStatus(.error)
-                continuation.finish(throwing: ClaudeServiceError.invalidResponse)
-                return
-            }
-
-            // Mark SessionManager as connected on successful streaming start
-            await updateSessionManagerConnectionStatus(.connected)
-
-            var hasReceivedData = false
-
-            // Process Server-Sent Events with SessionManager context preservation
-            for try await line in asyncBytes.lines {
-                if line.hasPrefix("data: ") {
-                    hasReceivedData = true
-                    let jsonData = String(line.dropFirst(6))
-                    if let data = jsonData.data(using: .utf8) {
-                        do {
-                            let chunk = try decoder.decode(StreamingChunk.self, from: data)
-                            continuation.yield(chunk)
-
-                            if chunk.chunkType == .complete || chunk.chunkType == .error {
-                                continuation.finish()
-                                return
-                            }
-                        } catch {
-                            print("⚠️ Failed to decode SessionManager streaming chunk: \(error)")
-                        }
-                    }
-                }
-            }
-
-            // If stream ended without completion, check if retry is needed
-            if !hasReceivedData && attempt < maxRetryAttempts {
-                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
-                print("⚠️ SessionManager stream ended without data, retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
-            } else {
-                continuation.finish()
-            }
-        } catch {
-            // Handle network errors with retry
-            if attempt < maxRetryAttempts && isRetryableError(error) {
-                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
-                print("⚠️ SessionManager stream error: \(error.localizedDescription), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await streamQueryWithSessionManagerRetry(request: request, continuation: continuation, attempt: attempt + 1)
-                } catch {
-                    await updateSessionManagerConnectionStatus(.error)
-                    continuation.finish(throwing: error)
-                }
-            } else {
-                await updateSessionManagerConnectionStatus(.error)
-                continuation.finish(throwing: error)
-            }
-        }
+        return streamingService.streamQueryWithSessionManager(request)
     }
 
     func getSessionManagerStats() async throws -> SessionManagerHealthResponse {
-        let url = baseURL.appendingPathComponent("claude/session-manager/stats")
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClaudeServiceError.invalidResponse
-        }
-
-        switch httpResponse.statusCode {
-        case 200:
-            let statsResponse = try decoder.decode(SessionManagerHealthResponse.self, from: data)
+        do {
+            let response = try await sessionDataSource.getSessionManagerStats()
             await updateSessionManagerConnectionStatus(.connected)
-
-            // Extract and store session manager stats if available
-            if let statsData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let sessionManagerStatsData = statsData["session_manager_stats"] as? [String: Any] {
-
-                let statsJsonData = try JSONSerialization.data(withJSONObject: sessionManagerStatsData)
-                let stats = try decoder.decode(SessionManagerStats.self, from: statsJsonData)
-
-                await MainActor.run {
-                    self.sessionManagerStats = stats
-                }
-            }
-
-            return statsResponse
-        case 404:
+            return response
+        } catch {
             await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.sessionManagerUnavailable
-        default:
-            let errorResponse = try? decoder.decode(ErrorResponse.self, from: data)
-            await updateSessionManagerConnectionStatus(.error)
-            throw ClaudeServiceError.serverError(errorResponse?.message ?? "HTTP \(httpResponse.statusCode)")
+            throw error
         }
     }
 
@@ -588,278 +262,17 @@ class ClaudeService: NSObject, ClaudeServiceProtocol {
     }
 
     func updateSession(request: SessionUpdateRequest) async throws -> SessionResponse {
-        let url = baseURL.appendingPathComponent("claude/sessions/\(request.sessionId)")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "PUT"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestData = try encoder.encode(request)
-        urlRequest.httpBody = requestData
-        
-        let (data, response) = try await session.data(for: urlRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ClaudeServiceError.invalidResponse
-        }
-        
-        return try decoder.decode(SessionResponse.self, from: data)
+        return try await sessionDataSource.updateSession(request)
     }
 
     // MARK: - Query Management
 
     func sendQuery(request: ClaudeQueryRequest) async throws -> ClaudeQueryResponse {
-        let url = baseURL.appendingPathComponent("claude/query")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestData = try encoder.encode(request)
-        urlRequest.httpBody = requestData
-        
-        let (data, response) = try await session.data(for: urlRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ClaudeServiceError.invalidResponse
-        }
-        
-        return try decoder.decode(ClaudeQueryResponse.self, from: data)
+        return try await queryService.sendQuery(request)
     }
 
     func streamQuery(request: ClaudeQueryRequest) -> AsyncThrowingStream<StreamingChunk, Error> {
-        return AsyncThrowingStream { continuation in
-            Task {
-                await streamQueryWithRetry(request: request, continuation: continuation, attempt: 0)
-            }
-        }
+        return streamingService.streamQuery(request)
     }
 
-    private func streamQueryWithRetry(
-        request: ClaudeQueryRequest,
-        continuation: AsyncThrowingStream<StreamingChunk, Error>.Continuation,
-        attempt: Int
-    ) async {
-        do {
-            let url = baseURL.appendingPathComponent("claude/stream")
-            var urlRequest = URLRequest(url: url)
-            urlRequest.httpMethod = "POST"
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-            urlRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-            let requestData = try encoder.encode(request)
-            urlRequest.httpBody = requestData
-
-            let (asyncBytes, response) = try await session.bytes(for: urlRequest)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ClaudeServiceError.invalidResponse
-            }
-
-            // Handle rate limiting and server errors with retry
-            if httpResponse.statusCode == 429 || (500...599).contains(httpResponse.statusCode) {
-                if attempt < maxRetryAttempts {
-                    let delay = calculateRetryDelay(attempt: attempt, statusCode: httpResponse.statusCode)
-                    print("⚠️ Stream request failed with status \(httpResponse.statusCode), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await streamQueryWithRetry(request: request, continuation: continuation, attempt: attempt + 1)
-                    return
-                } else {
-                    continuation.finish(throwing: ClaudeServiceError.serverError("Max retry attempts reached after status \(httpResponse.statusCode)"))
-                    return
-                }
-            }
-
-            guard httpResponse.statusCode == 200 else {
-                continuation.finish(throwing: ClaudeServiceError.invalidResponse)
-                return
-            }
-
-            var hasReceivedData = false
-
-            // Process Server-Sent Events with connection monitoring
-            for try await line in asyncBytes.lines {
-                if line.hasPrefix("data: ") {
-                    hasReceivedData = true
-                    let jsonData = String(line.dropFirst(6))
-                    if let data = jsonData.data(using: .utf8) {
-                        do {
-                            let chunk = try decoder.decode(StreamingChunk.self, from: data)
-                            continuation.yield(chunk)
-
-                            if chunk.chunkType == .complete || chunk.chunkType == .error {
-                                continuation.finish()
-                                return
-                            }
-                        } catch {
-                            print("⚠️ Failed to decode streaming chunk: \(error)")
-                            // Continue processing other chunks
-                        }
-                    }
-                }
-            }
-
-            // If stream ended without completion, check if retry is needed
-            if !hasReceivedData && attempt < maxRetryAttempts {
-                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
-                print("⚠️ Stream ended without data, retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                await streamQueryWithRetry(request: request, continuation: continuation, attempt: attempt + 1)
-            } else {
-                continuation.finish()
-            }
-        } catch {
-            // Handle network errors with retry
-            if attempt < maxRetryAttempts && isRetryableError(error) {
-                let delay = calculateRetryDelay(attempt: attempt, statusCode: 0)
-                print("⚠️ Stream error: \(error.localizedDescription), retrying in \(delay)s (attempt \(attempt + 1)/\(maxRetryAttempts))")
-
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await streamQueryWithRetry(request: request, continuation: continuation, attempt: attempt + 1)
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            } else {
-                continuation.finish(throwing: error)
-            }
-        }
-    }
-
-    private func calculateRetryDelay(attempt: Int, statusCode: Int) -> TimeInterval {
-        // Exponential backoff with jitter
-        let exponentialDelay = min(baseRetryDelay * pow(2.0, Double(attempt)), maxRetryDelay)
-        let jitter = Double.random(in: 0...0.3) * exponentialDelay
-
-        // Additional delay for rate limiting
-        if statusCode == 429 {
-            return exponentialDelay + jitter + 5.0  // Add extra delay for rate limits
-        }
-
-        return exponentialDelay + jitter
-    }
-
-    private func isRetryableError(_ error: Error) -> Bool {
-        // Check for retryable network errors
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut, .networkConnectionLost, .notConnectedToInternet,
-                 .dnsLookupFailed, .cannotConnectToHost:
-                return true
-            default:
-                return false
-            }
-        }
-
-        // Check for our custom errors
-        if let serviceError = error as? ClaudeServiceError {
-            switch serviceError {
-            case .connectionTimeout, .healthCheckFailed:
-                return true
-            default:
-                return false
-            }
-        }
-
-        return false
-    }
-
-    private func isSessionManagerError(_ error: Error) -> Bool {
-        if let serviceError = error as? ClaudeServiceError {
-            switch serviceError {
-            case .sessionManagerUnavailable:
-                return true
-            default:
-                return false
-            }
-        }
-        return false
-    }
-}
-
-// MARK: - Error Types
-
-enum ClaudeServiceError: LocalizedError {
-    case invalidURL
-    case invalidResponse
-    case serverError(String)
-    case sessionNotFound
-    case sessionManagerUnavailable
-    case healthCheckFailed
-    case connectionTimeout
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL:
-            return "Invalid URL"
-        case .invalidResponse:
-            return "Invalid server response"
-        case .serverError(let message):
-            return "Server error: \(message)"
-        case .sessionNotFound:
-            return "Session not found"
-        case .healthCheckFailed:
-            return "Health check failed"
-        case .connectionTimeout:
-            return "Connection timeout"
-        case .sessionManagerUnavailable:
-            return "SessionManager service unavailable"
-        }
-    }
-}
-
-// MARK: - Supporting Models
-
-struct SessionListRequest: Codable {
-    let userId: String
-    let limit: Int
-    let offset: Int
-    let statusFilter: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case userId = "user_id"
-        case limit
-        case offset
-        case statusFilter = "status_filter"
-    }
-}
-
-struct SessionListResponse: Codable {
-    let sessions: [SessionResponse]
-    let totalCount: Int
-    let hasMore: Bool
-    let nextOffset: Int?
-    
-    enum CodingKeys: String, CodingKey {
-        case sessions
-        case totalCount = "total_count"
-        case hasMore = "has_more"
-        case nextOffset = "next_offset"
-    }
-}
-
-struct SessionUpdateRequest: Codable {
-    let sessionId: String
-    let userId: String
-    let sessionName: String?
-    let status: String?
-    let context: [String: AnyCodable]?
-    
-    enum CodingKeys: String, CodingKey {
-        case sessionId = "session_id"
-        case userId = "user_id"
-        case sessionName = "session_name"
-        case status
-        case context
-    }
-}
-
-struct HealthResponse: Codable {
-    let status: String
-    let timestamp: Date
-    let version: String
-    let dependencies: [String: String]?
 }

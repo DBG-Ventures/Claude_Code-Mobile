@@ -14,22 +14,37 @@ struct VisionForgeApp: App {
 
     init() {
         // Initialize network manager with saved configuration if available
+        let networkManager: NetworkManager
         if let savedConfig = BackendConfig.loadFromKeychain() {
-            _networkManager = State(initialValue: NetworkManager(config: savedConfig))
+            networkManager = NetworkManager(config: savedConfig)
         } else {
-            _networkManager = State(initialValue: NetworkManager())
+            networkManager = NetworkManager()
         }
+        _networkManager = State(initialValue: networkManager)
 
-        // Initialize session persistence service (internal to repository)
+        // Initialize session persistence service
         let persistenceService = SessionPersistenceService()
 
-        // Initialize Claude service
-        let claudeService = ClaudeService(baseURL: URL(string: "http://placeholder")!)
+        // Use NetworkManager's properly configured Claude service
+        let claudeService = networkManager.claudeService
 
-        // Initialize repository for unified session management
+        // Initialize modular session repository with the NetworkManager's Claude service
+        let cacheManager = SessionCacheManager()
+        let syncService = SessionSyncService(
+            dataSource: claudeService.sessionAPIClient,
+            userId: "mobile-user"
+        )
+        let lifecycleManager = SessionLifecycleManager(
+            persistenceService: persistenceService,
+            syncService: syncService
+        )
+
         _sessionRepository = State(initialValue: SessionRepository(
             claudeService: claudeService,
-            persistenceService: persistenceService
+            persistenceService: persistenceService,
+            cacheManager: cacheManager,
+            syncService: syncService,
+            lifecycleManager: lifecycleManager
         ))
 
         // Migrate any old credentials from UserDefaults
@@ -51,20 +66,17 @@ struct VisionForgeApp: App {
         Task { @MainActor in
             // Load saved configuration from Keychain
             if let savedConfig = BackendConfig.loadFromKeychain() {
+                print("🔧 Loading saved backend configuration: \(savedConfig.host):\(savedConfig.port)")
                 await networkManager.updateConfiguration(savedConfig)
-            }
 
-            // Connect to backend if configuration exists
-            if networkManager.activeConfig.baseURL != nil {
-                do {
-                    try await networkManager.claudeService.connect()
-                    print("✅ Restored connection to backend")
+                // CRITICAL: Update SessionRepository with the new ClaudeService
+                await sessionRepository.updateClaudeService(networkManager.claudeService)
+                print("✅ SessionRepository updated with configured ClaudeService")
 
-                    // NOTE: Session restoration handled by SessionRepository
-                    print("✅ Session restoration delegated to SessionRepository")
-                } catch {
-                    print("⚠️ Failed to restore connection: \(error)")
-                }
+                // Check SessionManager connection and load sessions
+                await sessionRepository.checkSessionManagerConnectionStatus()
+            } else {
+                print("⚠️ No saved backend configuration found")
             }
         }
     }

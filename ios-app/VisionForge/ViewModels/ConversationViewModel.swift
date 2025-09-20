@@ -464,9 +464,9 @@ class ConversationViewModel {
                         id: message.id,
                         content: message.content,
                         role: message.role,
-                        timestamp: message.timestamp ?? Date(),
+                        timestamp: message.timestamp,
                         sessionId: sessionId,
-                        metadata: message.metadata
+                        metadata: message.sessionManagerContext
                     )
                 }
 

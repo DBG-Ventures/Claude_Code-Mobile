@@ -571,6 +571,52 @@ class SessionPersistenceService: SessionPersistenceServiceProtocol {
             sessionManagerContext: sessionManagerContext
         )
     }
+
+    // MARK: - Background Operations
+
+    /// Perform background persistence for app lifecycle transitions
+    func performBackgroundPersistence() async {
+        guard let container = persistentContainer else {
+            print("⚠️ Background persistence failed: container not initialized")
+            return
+        }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            container.performBackgroundTask { context in
+                do {
+                    if context.hasChanges {
+                        try context.save()
+                        print("✅ Background persistence completed")
+                    }
+                } catch {
+                    print("⚠️ Background persistence failed: \(error)")
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Perform emergency persistence during app termination
+    func performEmergencyPersistence() async {
+        guard let container = persistentContainer else {
+            print("🚨 Emergency persistence failed: container not initialized")
+            return
+        }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            container.performBackgroundTask { context in
+                do {
+                    if context.hasChanges {
+                        try context.save()
+                        print("🚨 Emergency persistence completed")
+                    }
+                } catch {
+                    print("🚨 Emergency persistence failed: \(error)")
+                }
+                continuation.resume()
+            }
+        }
+    }
 }
 
 // MARK: - CoreData Model Extensions

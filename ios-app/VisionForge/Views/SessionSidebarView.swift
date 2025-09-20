@@ -508,11 +508,7 @@ struct SessionRow: View {
 
     NavigationSplitView {
         SessionSidebarView(selectedSessionId: $selectedSessionId)
-            .environment(NetworkManager())
-            .environment(SessionRepository(
-                claudeService: ClaudeService(baseURL: URL(string: "http://localhost:8000")!),
-                persistenceService: SessionPersistenceService()
-            ))
+            .previewEnvironment()
     } detail: {
         Text("Select a session")
             .font(.title2)

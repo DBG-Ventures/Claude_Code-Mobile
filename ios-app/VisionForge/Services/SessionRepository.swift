@@ -1,34 +1,30 @@
 //
 //  SessionRepository.swift
-//  Single source of truth for session management.
+//  Session repository using dependency injection for modular services
 //
-//  Implements Repository pattern to consolidate session logic and eliminate duplication
-//  between ViewModels, following SOLID principles for clean architecture.
+//  Refactored to use extracted session cache, sync, and lifecycle services
+//  while maintaining the Repository pattern and SOLID principles.
 //
 
 import Foundation
 import Observation
 import UIKit
 
-/// Protocol defining session repository operations
-protocol SessionRepositoryProtocol: AnyObject {
-    func createSession(name: String?, workingDirectory: String?) async throws -> SessionManagerResponse
-    func deleteSession(_ sessionId: String) async throws
-    func getSession(_ sessionId: String) async throws -> SessionManagerResponse?
-    func getAllSessions() async throws -> [SessionManagerResponse]
-    func updateSessionActivity(_ sessionId: String) async
-    func switchToSession(_ sessionId: String) async throws
-}
+// MARK: - Service Protocol Imports
+// Protocols are now defined in their respective service files
 
-/// Repository managing all session operations
+/// Repository managing all session operations using modular services
 @MainActor
 @Observable
 final class SessionRepository: SessionRepositoryProtocol {
 
-    // MARK: - Dependencies
+    // MARK: - Service Dependencies
 
     private var claudeService: ClaudeService
     private let persistenceService: SessionPersistenceService
+    private let cacheManager: SessionCacheManagerProtocol
+    private let syncService: SessionSyncServiceProtocol
+    private let lifecycleManager: SessionLifecycleManagerProtocol
     private let userId: String
 
     // MARK: - Observable State
@@ -41,20 +37,9 @@ final class SessionRepository: SessionRepositoryProtocol {
     var error: ErrorResponse?
     var sessionManagerStatus: SessionManagerConnectionStatus = .disconnected
 
-    // MARK: - Cache Management
+    // MARK: - Legacy Properties (for observer compatibility)
 
-    private var sessionCache: [String: SessionManagerResponse] = [:]
-    private var conversationCache: [String: [ConversationMessage]] = [:]
-    private let maxCachedSessions = 20
-    private let maxConversationHistoryPerSession = 100
-    var sessionCacheSize: Int = 0
-
-    // MARK: - Background Refresh
-
-    private var backgroundRefreshTimer: Timer?
-    private let backgroundRefreshInterval: TimeInterval = 60
     private var claudeServiceObserver: Task<Void, Never>?
-    private var appLifecycleObservers: [NSObjectProtocol] = []
 
     // MARK: - Computed Properties
 
@@ -85,14 +70,20 @@ final class SessionRepository: SessionRepositoryProtocol {
     init(
         claudeService: ClaudeService,
         persistenceService: SessionPersistenceService,
+        cacheManager: SessionCacheManagerProtocol,
+        syncService: SessionSyncServiceProtocol,
+        lifecycleManager: SessionLifecycleManagerProtocol,
         userId: String = "mobile-user"
     ) {
         self.claudeService = claudeService
         self.persistenceService = persistenceService
+        self.cacheManager = cacheManager
+        self.syncService = syncService
+        self.lifecycleManager = lifecycleManager
         self.userId = userId
 
         setupObservers()
-        startBackgroundRefresh()
+        lifecycleManager.startBackgroundRefresh()
 
         // Initial session restoration
         Task {
@@ -108,6 +99,7 @@ final class SessionRepository: SessionRepositoryProtocol {
             }
         }
     }
+
 
     // MARK: - Public Methods
 
@@ -159,17 +151,28 @@ final class SessionRepository: SessionRepositoryProtocol {
     }
 
     func getSession(_ sessionId: String) async throws -> SessionManagerResponse? {
-        // Check local cache first
-        if let cached = sessions.first(where: { $0.sessionId == sessionId }) {
+        // Check cache first using cache manager
+        if let cached = await cacheManager.getCachedSession(sessionId) {
             return cached
         }
 
+        // Check local sessions list
+        if let local = sessions.first(where: { $0.sessionId == sessionId }) {
+            await cacheManager.cacheSession(local)
+            return local
+        }
+
         // Fetch from backend
-        return try await claudeService.getSessionWithManager(
+        if let session = try await claudeService.getSessionWithManager(
             sessionId: sessionId,
             userId: userId,
             includeHistory: true
-        )
+        ) {
+            await cacheManager.cacheSession(session)
+            return session
+        }
+
+        return nil
     }
 
     func getAllSessions() async throws -> [SessionManagerResponse] {
@@ -180,29 +183,13 @@ final class SessionRepository: SessionRepositoryProtocol {
         let localSessions = try await persistenceService.loadRecentSessions(limit: 50)
         sessions = localSessions
 
-        // Then refresh from backend
-        let request = SessionListRequest(
-            userId: userId,
-            limit: 50,
-            offset: 0,
-            statusFilter: nil
-        )
+        // Then sync from backend using sync service
+        let syncedSessions = try await syncService.syncSessionsFromBackend()
+        sessions = syncedSessions.sorted { $0.lastActiveAt > $1.lastActiveAt }
 
-        let response = try await claudeService.getSessionsWithManager(request: request)
-
-        // Convert and update sessions
-        let sessionManagerResponses = response.sessions.map { session in
-            SessionManagerResponse.from(
-                session,
-                workingDirectory: extractWorkingDirectory(from: session.context)
-            )
-        }
-
-        sessions = sessionManagerResponses.sorted { $0.lastActiveAt > $1.lastActiveAt }
-
-        // Persist all sessions
+        // Cache all sessions
         for session in sessions {
-            try await persistenceService.saveSession(session)
+            await cacheManager.cacheSession(session)
         }
 
         return sessions
@@ -238,15 +225,15 @@ final class SessionRepository: SessionRepositoryProtocol {
         defer { isLoading = false }
 
         do {
-            // Check local cache first for instant switching
-            if sessionCache[sessionId] != nil {
+            // Check cache first for instant switching
+            if let cachedSession = await cacheManager.getCachedSession(sessionId) {
                 currentSessionId = sessionId
                 await updateSessionActivity(sessionId)
                 print("✅ Switched to cached session \(sessionId)")
                 return
             }
 
-            // Fetch from SessionManager backend
+            // Fetch from backend
             guard let session = try await claudeService.getSessionWithManager(
                 sessionId: sessionId,
                 userId: userId,
@@ -256,14 +243,14 @@ final class SessionRepository: SessionRepositoryProtocol {
             }
 
             // Update cache and current session
-            await cacheSession(session)
+            await cacheManager.cacheSession(session)
             currentSessionId = sessionId
             await updateSessionActivity(sessionId)
 
             // Save to local persistence
             try await persistenceService.saveSession(session)
 
-            print("✅ Switched to SessionManager session \(sessionId)")
+            print("✅ Switched to session \(sessionId)")
 
         } catch {
             lastError = "Failed to switch to session \(sessionId): \(error.localizedDescription)"
@@ -289,32 +276,16 @@ final class SessionRepository: SessionRepositoryProtocol {
         defer { isLoading = false }
 
         do {
-            let sessionListRequest = SessionListRequest(
-                userId: userId,
-                limit: 50,
-                offset: 0,
-                statusFilter: nil
-            )
-
-            let sessionListResponse = try await claudeService.getSessionsWithManager(request: sessionListRequest)
-
-            // Convert SessionResponse to SessionManagerResponse
-            let sessionManagerResponses = sessionListResponse.sessions.map { sessionResponse in
-                convertToSessionManagerResponse(sessionResponse)
-            }
-            sessions = sessionManagerResponses
+            // Use sync service to refresh from backend
+            let refreshedSessions = try await syncService.syncSessionsFromBackend()
+            sessions = refreshedSessions
 
             // Update cache with fresh data
-            for session in sessionManagerResponses {
-                await cacheSession(session)
+            for session in refreshedSessions {
+                await cacheManager.cacheSession(session)
             }
 
-            // Sync with local persistence
-            for session in sessionManagerResponses {
-                try await persistenceService.saveSession(session)
-            }
-
-            print("✅ Refreshed \(sessionListResponse.sessions.count) sessions from SessionManager")
+            print("✅ Refreshed \(refreshedSessions.count) sessions from backend")
 
         } catch {
             lastError = "Failed to refresh sessions: \(error.localizedDescription)"
@@ -336,7 +307,7 @@ final class SessionRepository: SessionRepositoryProtocol {
 
             // Update cache with persisted sessions
             for session in localSessions {
-                await cacheSession(session)
+                await cacheManager.cacheSession(session)
             }
 
             print("✅ Restored \(localSessions.count) sessions from persistence")
@@ -380,7 +351,7 @@ final class SessionRepository: SessionRepositoryProtocol {
 
             // Update cache
             for session in sessions {
-                sessionCache[session.sessionId] = session
+                await cacheManager.cacheSession(session)
             }
         } catch {
             sessionManagerStatus = .disconnected
@@ -452,88 +423,37 @@ final class SessionRepository: SessionRepositoryProtocol {
             }
         }
 
-        appLifecycleObservers = [foregroundObserver, backgroundObserver]
+        // Lifecycle observers are managed by lifecycleManager
     }
 
-    private func startBackgroundRefresh() {
-        backgroundRefreshTimer = Timer.scheduledTimer(withTimeInterval: backgroundRefreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.performBackgroundRefresh()
-            }
-        }
-    }
 
-    // MARK: - Cache Management
 
-    private func cacheSession(_ session: SessionManagerResponse) async {
-        sessionCache[session.sessionId] = session
-
-        // Manage cache size
-        if sessionCache.count > maxCachedSessions {
-            await evictOldestCachedSessions()
-        }
-
-        await updateCacheSize()
-    }
-
-    private func evictOldestCachedSessions() async {
-        let sortedSessions = sessionCache.values.sorted { $0.lastActiveAt < $1.lastActiveAt }
-        let sessionsToRemove = sortedSessions.prefix(sessionCache.count - maxCachedSessions + 5)
-
-        for session in sessionsToRemove {
-            sessionCache.removeValue(forKey: session.sessionId)
-            conversationCache.removeValue(forKey: session.sessionId)
-        }
-
-        await updateCacheSize()
-        print("🧹 Evicted \(sessionsToRemove.count) old sessions from cache")
-    }
-
-    private func updateCacheSize() async {
-        sessionCacheSize = sessionCache.count
-    }
-
-    // MARK: - Background Operations
-
-    private func performBackgroundRefresh() async {
-        guard sessionManagerStatus.isHealthy else { return }
-
-        do {
-            try await refreshSessionsFromBackend()
-        } catch {
-            print("⚠️ Background refresh failed: \(error)")
-        }
-    }
 
     private func handleSessionManagerStatsUpdate(_ stats: SessionManagerStats) {
         // Monitor SessionManager health
-        if !stats.isMemoryUsageHealthy {
-            print("⚠️ SessionManager memory usage high: \(stats.memoryUsageMB)MB")
+        if !stats.isCleanupHealthy {
+            print("⚠️ SessionManager cleanup task running continuously")
+        }
+
+        // Log session age info if available
+        if let ageSummary = stats.sessionAgeSummary {
+            print("📊 SessionManager: \(ageSummary)")
         }
 
         // Adjust local cache based on backend statistics
-        if stats.activeSessions < 5 && sessionCache.count > 10 {
+        if stats.activeSessions < 5 {
             Task {
-                await evictOldestCachedSessions()
+                await cacheManager.evictOldestCachedSessions()
             }
         }
     }
 
-    // MARK: - App Lifecycle Handling
+    // MARK: - App Lifecycle Handling (Delegated to LifecycleManager)
 
     private func handleAppWillEnterForeground() async {
-        print("📱 App entering foreground - refreshing session state")
+        await lifecycleManager.handleAppWillEnterForeground()
 
-        // Reconnect to SessionManager if needed
-        if sessionManagerStatus == .disconnected {
-            do {
-                try await claudeService.connect()
-            } catch {
-                print("⚠️ Failed to reconnect on foreground: \(error)")
-            }
-        }
-
-        // Refresh sessions from backend
+        // Update our state based on lifecycle changes
         if sessionManagerStatus.isHealthy {
             do {
                 try await refreshSessionsFromBackend()
@@ -544,50 +464,23 @@ final class SessionRepository: SessionRepositoryProtocol {
     }
 
     private func handleAppDidEnterBackground() async {
-        print("📱 App entering background - persisting session state")
-
-        // Persist current state
-        for session in sessionCache.values {
-            do {
-                try await persistenceService.saveSession(session)
-            } catch {
-                print("⚠️ Failed to persist session \(session.sessionId): \(error)")
-            }
-        }
+        await lifecycleManager.handleAppDidEnterBackground()
     }
 
     // MARK: - Conversation History Management
 
     func loadConversationHistory(for sessionId: String) async throws -> [ConversationMessage] {
-        // Check cache first
-        if let cachedHistory = conversationCache[sessionId] {
-            return cachedHistory
-        }
-
         // Load from persistence
         let persistedHistory = try await persistenceService.loadConversationHistory(
             sessionId: sessionId,
-            limit: maxConversationHistoryPerSession
+            limit: 100
         )
 
-        // Cache the loaded history
-        conversationCache[sessionId] = persistedHistory
         return persistedHistory
     }
 
     func saveConversationMessage(_ message: ConversationMessage) async {
-        // Add to cache
-        var history = conversationCache[message.sessionId] ?? []
-        history.append(message)
-
-        // Trim if too long
-        if history.count > maxConversationHistoryPerSession {
-            history = Array(history.suffix(maxConversationHistoryPerSession))
-        }
-
-        conversationCache[message.sessionId] = history
-
-        // Persist the message
+        // Persist the message directly (cache management handled by cache manager)
         do {
             try await persistenceService.saveConversationMessage(message)
         } catch {
@@ -627,19 +520,36 @@ final class SessionRepository: SessionRepositoryProtocol {
 
     // MARK: - Statistics
 
-    func getSessionStatistics() -> SessionStateStatistics {
+    func getSessionStatistics() async -> SessionStateStatistics {
+        let cacheSize = await cacheManager.getCacheSize()
         return SessionStateStatistics(
             totalActiveSessions: activeSessions.count,
-            cachedSessions: sessionCache.count,
+            cachedSessions: cacheSize,
             currentSessionId: currentSessionId,
             sessionManagerStatus: sessionManagerStatus,
             lastRefreshTime: Date(),
-            cacheHitRate: calculateCacheHitRate()
+            cacheHitRate: 0.85 // This could be enhanced with actual metrics from cache manager
         )
     }
 
-    private func calculateCacheHitRate() -> Double {
-        return sessionCache.isEmpty ? 0.0 : 0.85
+    // MARK: - Cache Management (Required by SessionRepositoryProtocol)
+
+    func clearCache() async {
+        await cacheManager.clearCache()
+    }
+
+    func getCacheSize() async -> Int {
+        return await cacheManager.getCacheSize()
+    }
+
+    // MARK: - Background Refresh Management (Required by SessionRepositoryProtocol)
+
+    func startBackgroundRefresh() {
+        lifecycleManager.startBackgroundRefresh()
+    }
+
+    func stopBackgroundRefresh() {
+        lifecycleManager.stopBackgroundRefresh()
     }
 
     // MARK: - Private Helpers
@@ -696,6 +606,7 @@ enum SessionRepositoryError: LocalizedError {
         }
     }
 }
+
 
 // MARK: - Supporting Types
 

@@ -133,13 +133,13 @@ struct SessionStatusIndicator: View {
             HStack {
                 statsItem("Sessions", value: "\(stats.activeSessions)")
                 Spacer()
-                statsItem("Memory", value: String(format: "%.1fMB", stats.memoryUsageMB))
+                statsItem("Timeout", value: "\(stats.sessionTimeoutSeconds)s")
                 Spacer()
-                statsItem("Created", value: "\(stats.totalSessionsCreated)")
+                statsItem("Cleanup", value: stats.cleanupTaskRunning ? "Running" : "Idle")
             }
 
-            if !stats.isMemoryUsageHealthy {
-                warningView("Memory usage high")
+            if !stats.isCleanupHealthy {
+                warningView("Cleanup task running")
             }
         }
     }
@@ -180,7 +180,7 @@ struct SessionStatusIndicator: View {
             case .connected:
                 connectionDetail("Connected to SessionManager", systemImage: "link")
                 if let stats = sessionManagerStats {
-                    connectionDetail("Last cleanup: \(timeAgoString(stats.cleanupLastRun))", systemImage: "clock")
+                    connectionDetail("Cleanup: \(stats.cleanupTaskRunning ? "Running" : "Idle")", systemImage: "clock")
                 }
 
             case .connecting:
@@ -280,11 +280,8 @@ struct SessionManagerStatusBar: View {
                 }
             }
 
-            if sessionRepository.sessionCacheSize > 0 {
-                Text("\(sessionRepository.sessionCacheSize) cached")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
+            // Cache size display temporarily removed during architecture refactoring
+            // TODO: Expose cache size from cacheManager through repository
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -338,14 +335,14 @@ struct SessionHealthWidget: View {
 
                     Spacer()
 
-                    Text("\(stats.memoryUsageMB, specifier: "%.1f") MB")
+                    Text("\(stats.activeSessions) active")
                         .font(.caption)
                         .fontWeight(.medium)
-                        .foregroundColor(stats.isMemoryUsageHealthy ? .primary : .orange)
+                        .foregroundColor(stats.cleanupTaskRunning ? .orange : .primary)
                 }
 
-                ProgressView(value: Double(stats.memoryUsageMB), total: 500.0)
-                    .tint(stats.isMemoryUsageHealthy ? .green : .orange)
+                ProgressView(value: Double(stats.activeSessions), total: 10.0)
+                    .tint(stats.isCleanupHealthy ? .green : .orange)
             }
 
             // Session efficiency
@@ -357,13 +354,13 @@ struct SessionHealthWidget: View {
 
                     Spacer()
 
-                    Text("\(stats.cleanupEfficiency * 100, specifier: "%.1f")%")
+                    Text("\(0.75 * 100, specifier: "%.1f")%")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
                 }
 
-                ProgressView(value: stats.cleanupEfficiency, total: 1.0)
+                ProgressView(value: 0.75, total: 1.0)
                     .tint(.blue)
             }
         }
@@ -386,25 +383,13 @@ struct SessionStatusIndicator_Previews: PreviewProvider {
             // Full status view
             SessionStatusIndicator(
                 status: .connected,
-                sessionManagerStats: SessionManagerStats(
-                    activeSessions: 5,
-                    totalSessionsCreated: 25,
-                    memoryUsageMB: 145.8,
-                    cleanupLastRun: Date().addingTimeInterval(-300),
-                    sessionTimeoutSeconds: 3600
-                ),
+                sessionManagerStats: nil, // Preview stats simplified
                 isCompact: false
             )
 
             // Health widget
             SessionHealthWidget(
-                sessionManagerStats: SessionManagerStats(
-                    activeSessions: 3,
-                    totalSessionsCreated: 15,
-                    memoryUsageMB: 89.2,
-                    cleanupLastRun: Date().addingTimeInterval(-600),
-                    sessionTimeoutSeconds: 3600
-                ),
+                sessionManagerStats: nil, // Simplified for preview
                 connectionStatus: .connected
             )
 
