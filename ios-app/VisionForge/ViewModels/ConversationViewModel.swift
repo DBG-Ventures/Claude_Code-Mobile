@@ -313,70 +313,87 @@ class ConversationViewModel {
 
         // Store current session ID
         currentSessionId = sessionId
-
         isLoading = true
 
         do {
-            // Load the specific session metadata
-            let sessionResponse = try await claudeService.getSession(sessionId: sessionId, userId: userId)
-
-            await MainActor.run {
-                self.currentSession = sessionResponse
-
-                // Convert SessionResponse to SessionManagerResponse for compatibility
-                let sessionManagerResponse = SessionManagerResponse(
-                    sessionId: sessionResponse.sessionId,
-                    userId: sessionResponse.userId,
-                    sessionName: sessionResponse.sessionName,
-                    workingDirectory: "/",
-                    status: sessionResponse.status,
-                    createdAt: sessionResponse.createdAt,
-                    lastActiveAt: sessionResponse.updatedAt,
-                    messageCount: sessionResponse.messageCount,
-                    conversationHistory: nil,
-                    sessionManagerStats: nil
-                )
-                self.currentSessionManager = sessionManagerResponse
-
-                // Load conversation history from the session response
-                self.messages = sessionResponse.messages.map { message in
-                    ClaudeMessage(
-                        id: message.id,
-                        content: message.content,
-                        role: message.role,
-                        timestamp: message.timestamp,
-                        sessionId: sessionId,
-                        metadata: message.metadata
-                    )
-                }
-
-                self.isLoading = false
-                print("✅ Loaded session \(sessionId) with \(sessionResponse.messages.count) messages")
-            }
+            let sessionResponse = try await fetchSessionData(claudeService: claudeService, sessionId: sessionId)
+            await processSessionResponse(sessionResponse, sessionId: sessionId)
         } catch ClaudeServiceError.sessionNotFound {
-            await MainActor.run {
-                self.isLoading = false
-                print("⚠️ Session \(sessionId) not found - creating new session")
-                // Session doesn't exist, create a new one
-                self.createInitialSessionIfNeeded()
-            }
+            await handleSessionNotFound(sessionId: sessionId)
         } catch {
-            await MainActor.run {
-                self.isLoading = false
-                print("⚠️ Failed to load session \(sessionId): \(error)")
+            await handleLoadError(error: error, sessionId: sessionId)
+        }
+    }
 
-                // Show error to user
-                self.setError(ErrorResponse(
-                    error: "session_load_failed",
-                    message: "Could not load session: \(error.localizedDescription)",
-                    details: nil,
-                    timestamp: Date(),
-                    requestId: nil
-                ))
+    private func fetchSessionData(claudeService: ClaudeService, sessionId: String) async throws -> SessionResponse {
+        // Load the specific session metadata
+        return try await claudeService.getSession(sessionId: sessionId, userId: userId)
+    }
 
-                // Try to create a new session as fallback
-                self.createInitialSessionIfNeeded()
-            }
+    private func processSessionResponse(_ sessionResponse: SessionResponse, sessionId: String) async {
+        await MainActor.run {
+            self.currentSession = sessionResponse
+            self.updateUIState(sessionResponse: sessionResponse, sessionId: sessionId)
+        }
+    }
+
+    private func updateUIState(sessionResponse: SessionResponse, sessionId: String) {
+        // Convert SessionResponse to SessionManagerResponse for compatibility
+        let sessionManagerResponse = SessionManagerResponse(
+            sessionId: sessionResponse.sessionId,
+            userId: sessionResponse.userId,
+            sessionName: sessionResponse.sessionName,
+            workingDirectory: "/",
+            status: sessionResponse.status,
+            createdAt: sessionResponse.createdAt,
+            lastActiveAt: sessionResponse.updatedAt,
+            messageCount: sessionResponse.messageCount,
+            conversationHistory: nil,
+            sessionManagerStats: nil
+        )
+        self.currentSessionManager = sessionManagerResponse
+
+        // Load conversation history from the session response
+        self.messages = sessionResponse.messages.map { message in
+            ClaudeMessage(
+                id: message.id,
+                content: message.content,
+                role: message.role,
+                timestamp: message.timestamp,
+                sessionId: sessionId,
+                metadata: message.metadata
+            )
+        }
+
+        self.isLoading = false
+        print("✅ Loaded session \(sessionId) with \(sessionResponse.messages.count) messages")
+    }
+
+    private func handleSessionNotFound(sessionId: String) async {
+        await MainActor.run {
+            self.isLoading = false
+            print("⚠️ Session \(sessionId) not found - creating new session")
+            // Session doesn't exist, create a new one
+            self.createInitialSessionIfNeeded()
+        }
+    }
+
+    private func handleLoadError(error: Error, sessionId: String) async {
+        await MainActor.run {
+            self.isLoading = false
+            print("⚠️ Failed to load session \(sessionId): \(error)")
+
+            // Show error to user
+            self.setError(ErrorResponse(
+                error: "session_load_failed",
+                message: "Could not load session: \(error.localizedDescription)",
+                details: nil,
+                timestamp: Date(),
+                requestId: nil
+            ))
+
+            // Try to create a new session as fallback
+            self.createInitialSessionIfNeeded()
         }
     }
 
@@ -487,8 +504,7 @@ class ConversationViewModel {
     private func startStreamingResponseWithSessionManager(query: String, sessionId: String) {
         guard let claudeService = claudeService else { return }
 
-        isStreaming = true
-        streamingMessageId = sessionId
+        handleStreamStart(sessionId: sessionId)
 
         // Start streaming task with SessionManager
         streamingContinuation = Task {
@@ -509,88 +525,14 @@ class ConversationViewModel {
                     switch chunk.chunkType {
                     case .start:
                         break
-
                     case .delta:
-                        if let content = chunk.content, !content.isEmpty {
-                            await MainActor.run {
-                                // Create a separate message bubble for each delta chunk
-                                let deltaMessageId = chunk.messageId ?? UUID().uuidString
-                                let deltaMessage = ClaudeMessage(
-                                    id: deltaMessageId,
-                                    content: content,
-                                    role: .assistant,
-                                    timestamp: Date(),
-                                    sessionId: sessionId
-                                )
-                                self.messages.append(deltaMessage)
-                            }
-                        }
-
+                        await handleStreamDelta(chunk: chunk, sessionId: sessionId)
                     case .complete:
-                        await MainActor.run {
-                            self.isStreaming = false
-                            self.streamingMessageId = nil
-
-                            // Update session activity in repository
-                            Task {
-                                await self.repository?.updateSessionActivity(sessionId)
-                            }
-                        }
-
+                        await handleStreamComplete(sessionId: sessionId)
                     case .error:
-                        await MainActor.run {
-                            let errorMessage = chunk.error ?? chunk.message ?? chunk.content ?? "Unknown streaming error"
-                            self.handleStreamingError(errorMessage)
-                        }
-
+                        await handleStreamError(chunk: chunk)
                     case .assistant, .thinking, .tool, .toolResult, .system:
-                        await MainActor.run {
-                            // Create separate message bubbles for each specialized chunk type
-                            if let content = chunk.content, !content.isEmpty {
-                                let stepMessageId = UUID().uuidString
-                                var metadata: [String: AnyCodable] = [
-                                    "chunk_type": .string(chunk.chunkType.rawValue)
-                                ]
-
-                                // Add chunk-specific metadata
-                                switch chunk.chunkType {
-                                case .thinking:
-                                    metadata["is_thinking_step"] = .bool(true)
-                                    if let signature = chunk.metadata?["signature"] as? String {
-                                        metadata["signature"] = .string(signature)
-                                    }
-                                case .tool:
-                                    if let toolName = chunk.metadata?["tool_name"] as? String {
-                                        metadata["tool_name"] = .string(toolName)
-                                    }
-                                    if let toolInput = chunk.metadata?["tool_input"] as? String {
-                                        metadata["tool_input"] = .string(toolInput)
-                                    }
-                                    if let toolId = chunk.metadata?["tool_id"] as? String {
-                                        metadata["tool_id"] = .string(toolId)
-                                    }
-                                case .toolResult:
-                                    if let toolUseId = chunk.metadata?["tool_use_id"] as? String {
-                                        metadata["tool_use_id"] = .string(toolUseId)
-                                    }
-                                    if let isError = chunk.metadata?["is_error"] as? Bool {
-                                        metadata["is_error"] = .bool(isError)
-                                    }
-                                default:
-                                    break
-                                }
-
-                                let stepMessage = ClaudeMessage(
-                                    id: stepMessageId,
-                                    content: content,
-                                    role: .assistant,
-                                    timestamp: Date(),
-                                    sessionId: sessionId,
-                                    metadata: metadata
-                                )
-                                self.messages.append(stepMessage)
-                            }
-                        }
+                        await processSpecializedChunk(chunk: chunk, sessionId: sessionId)
                     }
                 }
 
@@ -599,6 +541,97 @@ class ConversationViewModel {
                     self.stopBufferTimer()
                     self.handleStreamingError(error.localizedDescription)
                 }
+            }
+        }
+    }
+
+    private func handleStreamStart(sessionId: String) {
+        isStreaming = true
+        streamingMessageId = sessionId
+    }
+
+    private func handleStreamDelta(chunk: StreamingChunk, sessionId: String) async {
+        if let content = chunk.content, !content.isEmpty {
+            await MainActor.run {
+                // Create a separate message bubble for each delta chunk
+                let deltaMessageId = chunk.messageId ?? UUID().uuidString
+                let deltaMessage = ClaudeMessage(
+                    id: deltaMessageId,
+                    content: content,
+                    role: .assistant,
+                    timestamp: Date(),
+                    sessionId: sessionId
+                )
+                self.messages.append(deltaMessage)
+            }
+        }
+    }
+
+    private func handleStreamComplete(sessionId: String) async {
+        await MainActor.run {
+            self.isStreaming = false
+            self.streamingMessageId = nil
+
+            // Update session activity in repository
+            Task {
+                await self.repository?.updateSessionActivity(sessionId)
+            }
+        }
+    }
+
+    private func handleStreamError(chunk: StreamingChunk) async {
+        await MainActor.run {
+            let errorMessage = chunk.error ?? chunk.message ?? chunk.content ?? "Unknown streaming error"
+            self.handleStreamingError(errorMessage)
+        }
+    }
+
+    private func processSpecializedChunk(chunk: StreamingChunk, sessionId: String) async {
+        await MainActor.run {
+            // Create separate message bubbles for each specialized chunk type
+            if let content = chunk.content, !content.isEmpty {
+                let stepMessageId = UUID().uuidString
+                var metadata: [String: AnyCodable] = [
+                    "chunk_type": .string(chunk.chunkType.rawValue)
+                ]
+
+                // Add chunk-specific metadata
+                switch chunk.chunkType {
+                case .thinking:
+                    metadata["is_thinking_step"] = .bool(true)
+                    if let signature = chunk.metadata?["signature"] as? String {
+                        metadata["signature"] = .string(signature)
+                    }
+                case .tool:
+                    if let toolName = chunk.metadata?["tool_name"] as? String {
+                        metadata["tool_name"] = .string(toolName)
+                    }
+                    if let toolInput = chunk.metadata?["tool_input"] as? String {
+                        metadata["tool_input"] = .string(toolInput)
+                    }
+                    if let toolId = chunk.metadata?["tool_id"] as? String {
+                        metadata["tool_id"] = .string(toolId)
+                    }
+                case .toolResult:
+                    if let toolUseId = chunk.metadata?["tool_use_id"] as? String {
+                        metadata["tool_use_id"] = .string(toolUseId)
+                    }
+                    if let isError = chunk.metadata?["is_error"] as? Bool {
+                        metadata["is_error"] = .bool(isError)
+                    }
+                default:
+                    break
+                }
+
+                let stepMessage = ClaudeMessage(
+                    id: stepMessageId,
+                    content: content,
+                    role: .assistant,
+                    timestamp: Date(),
+                    sessionId: sessionId,
+                    metadata: metadata
+                )
+                self.messages.append(stepMessage)
             }
         }
     }

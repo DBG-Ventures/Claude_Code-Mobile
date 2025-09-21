@@ -45,7 +45,12 @@ class NetworkManager {
         self.pathMonitor = NWPathMonitor()
 
         // Initialize Claude service with proper dependencies
-        let baseURL = initialConfig.baseURL ?? URL(string: "http://localhost:8000")!
+        let baseURL = initialConfig.baseURL ?? {
+            guard let fallbackURL = URL(string: "http://localhost:8000") else {
+                fatalError("Failed to create fallback URL for localhost:8000")
+            }
+            return fallbackURL
+        }()
         let networkClient = ClaudeNetworkClient(baseURL: baseURL)
         let sessionDataSource = SessionAPIClient(networkClient: networkClient)
         let streamingService = ClaudeStreamingService(networkClient: networkClient)

@@ -281,7 +281,7 @@ struct ConversationView: View {
 // MARK: - Preview
 
 #Preview {
-    NavigationView {
+    NavigationStack {
         ConversationView(sessionId: "preview-session")
             .previewEnvironment()
     }
