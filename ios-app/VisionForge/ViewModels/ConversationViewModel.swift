@@ -151,19 +151,19 @@ class ConversationViewModel {
     }
 
     func loadSession(sessionId: String) {
-        #if DEBUG
-        // Load dummy messages for testing
-        stopStreaming()
-        clearMessages()
-        isLoading = true
-        currentSessionId = sessionId
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.messages = DummyData.dummyMessages
-            self.isLoading = false
-            print("✅ Loaded \(DummyData.dummyMessages.count) dummy messages for testing")
-        }
-        return
-        #endif
+//        #if DEBUG
+//        // Load dummy messages for testing
+//        stopStreaming()
+//        clearMessages()
+//        isLoading = true
+//        currentSessionId = sessionId
+//        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+//            self.messages = DummyData.dummyMessages
+//            self.isLoading = false
+//            print("✅ Loaded \(DummyData.dummyMessages.count) dummy messages for testing")
+//        }
+//        return
+//        #endif
 
         // Stop any current streaming
         stopStreaming()
