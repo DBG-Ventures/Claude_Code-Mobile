@@ -75,23 +75,30 @@ class ConversationViewModel {
         repositoryObserver = Task { @MainActor in
             guard let repository else { return }
 
-            while !Task.isCancelled {
-                withObservationTracking {
-                    // Observe repository changes
-                    self.sessionManagerStatus = repository.sessionManagerStatus
+            // Initialize current values
+            self.sessionManagerStatus = repository.sessionManagerStatus
+            if let repoSessionId = repository.currentSessionId,
+               repoSessionId != self.currentSessionId {
+                self.handleSessionChange(repoSessionId)
+            }
 
-                    // Auto-switch to new session if repository's current session changes
-                    if let repoSessionId = repository.currentSessionId,
-                       repoSessionId != self.currentSessionId {
-                        self.handleSessionChange(repoSessionId)
-                    }
-                } onChange: {
-                    Task { @MainActor in
-                        // Changes detected, loop will continue
+            while !Task.isCancelled {
+                // Use withObservationTracking only once per change, avoiding tight polling loop
+                await withCheckedContinuation { continuation in
+                    withObservationTracking {
+                        // Observe repository changes
+                        self.sessionManagerStatus = repository.sessionManagerStatus
+
+                        // Auto-switch to new session if repository's current session changes
+                        if let repoSessionId = repository.currentSessionId,
+                           repoSessionId != self.currentSessionId {
+                            self.handleSessionChange(repoSessionId)
+                        }
+                    } onChange: {
+                        // Resume continuation when changes are detected, no need for additional Task
+                        continuation.resume()
                     }
                 }
-
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
         }
     }
@@ -294,9 +301,9 @@ class ConversationViewModel {
         self.error = error
 
         // Auto-clear error after 15 seconds (longer for users to read)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-            if self.error?.timestamp == error.timestamp {
-                self.error = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            if self?.error?.timestamp == error.timestamp {
+                self?.error = nil
             }
         }
     }

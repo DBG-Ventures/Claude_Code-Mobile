@@ -9,21 +9,23 @@
 import Foundation
 import Network
 import Combine
+import Observation
 
 // MARK: - Configuration Validator
 
 @MainActor
-class ConfigurationValidator: ObservableObject {
+@Observable
+class ConfigurationValidator {
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
-    @Published var isValidating: Bool = false
-    @Published var validationResults: ValidationResults = ValidationResults()
-    @Published var lastHealthCheckResult: HealthCheckResult?
+    var isValidating: Bool = false
+    var validationResults: ValidationResults = ValidationResults()
+    var lastHealthCheckResult: HealthCheckResult?
 
     // MARK: - Private Properties
 
-    private var cancellables = Set<AnyCancellable>()
+    private nonisolated(unsafe) var cancellables = Set<AnyCancellable>()
     private let urlSession: URLSession
     private let networkMonitor: NWPathMonitor
 

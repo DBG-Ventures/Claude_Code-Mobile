@@ -14,6 +14,7 @@ struct ContentView: View {
 
     @Environment(NetworkManager.self) var networkManager
     @Environment(SessionRepository.self) var sessionRepository
+    @Environment(KeychainManager.self) var keychainManager
     @State private var needsBackendSetup = false
     @State private var selectedSessionId: String?
     @State private var isInitializing = true
@@ -180,7 +181,7 @@ struct ContentView: View {
 
     private func checkBackendConfiguration() {
         // Check Keychain for stored backend configuration
-        if let savedConfig = BackendConfig.loadFromKeychain() {
+        if let savedConfig = BackendConfig.loadFromKeychain(using: keychainManager) {
             needsBackendSetup = false
             Task {
                 await networkManager.updateConfiguration(savedConfig)
@@ -207,7 +208,7 @@ struct ContentView: View {
                 // Check SessionManager connection status after updating the service - this loads sessions
                 await sessionRepository.checkSessionManagerConnectionStatus()
                 // Save to Keychain for future use
-                try? savedConfig.saveToKeychain()
+                try? savedConfig.saveToKeychain(using: keychainManager)
                 // No need to call restoreSessionsFromPersistence as checkSessionManagerConnectionStatus already loads sessions
             }
         }

@@ -11,11 +11,16 @@ import SwiftUI
 struct VisionForgeApp: App {
     @State private var networkManager: NetworkManager
     @State private var sessionRepository: SessionRepository
+    @State private var keychainManager: KeychainManager
 
     init() {
+        // Initialize keychain manager
+        let keychainManager = KeychainManager()
+        _keychainManager = State(initialValue: keychainManager)
+
         // Initialize network manager with saved configuration if available
         let networkManager: NetworkManager
-        if let savedConfig = BackendConfig.loadFromKeychain() {
+        if let savedConfig = BackendConfig.loadFromKeychain(using: keychainManager) {
             networkManager = NetworkManager(config: savedConfig)
         } else {
             networkManager = NetworkManager()
@@ -48,7 +53,7 @@ struct VisionForgeApp: App {
         ))
 
         // Migrate any old credentials from UserDefaults
-        KeychainManager.shared.migrateFromUserDefaults()
+        keychainManager.migrateFromUserDefaults()
     }
 
     var body: some Scene {
@@ -56,6 +61,7 @@ struct VisionForgeApp: App {
             ContentView()
                 .environment(networkManager)
                 .environment(sessionRepository)
+                .environment(keychainManager)
                 .onAppear {
                     restoreSessionsOnLaunch()
                 }
@@ -65,7 +71,7 @@ struct VisionForgeApp: App {
     private func restoreSessionsOnLaunch() {
         Task { @MainActor in
             // Load saved configuration from Keychain
-            if let savedConfig = BackendConfig.loadFromKeychain() {
+            if let savedConfig = BackendConfig.loadFromKeychain(using: keychainManager) {
                 print("🔧 Loading saved backend configuration: \(savedConfig.host):\(savedConfig.port)")
                 await networkManager.updateConfiguration(savedConfig)
 

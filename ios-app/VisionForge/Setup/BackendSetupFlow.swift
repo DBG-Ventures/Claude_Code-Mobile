@@ -8,6 +8,7 @@
 
 import SwiftUI
 import Combine
+import Observation
 
 // MARK: - Backend Setup Flow
 
@@ -19,7 +20,7 @@ struct BackendSetupFlow: View {
 
     // MARK: - State Properties
 
-    @StateObject private var validator = ConfigurationValidator()
+    @State private var validator = ConfigurationValidator()
     @State private var currentStep: SetupStep = .welcome
     @State private var configuration = BackendConfigBuilder()
     @State private var isCompleting = false
@@ -64,7 +65,7 @@ struct BackendSetupFlow: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 // Background gradient
                 LinearGradient(
@@ -95,7 +96,6 @@ struct BackendSetupFlow: View {
                 configuration.applyLocalDevelopment()
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
     }
 
     // MARK: - Progress View
@@ -726,12 +726,13 @@ struct BackendSetupFlow: View {
 
 // MARK: - Configuration Builder
 
-class BackendConfigBuilder: ObservableObject {
-    @Published var name: String = "Local Development"
-    @Published var host: String = "localhost"
-    @Published var port: Int = 8000
-    @Published var scheme: String = "http"
-    @Published var timeout: Double = 30.0
+@Observable
+class BackendConfigBuilder {
+    var name: String = "Local Development"
+    var host: String = "localhost"
+    var port: Int = 8000
+    var scheme: String = "http"
+    var timeout: Double = 30.0
 
     var isLocalDevelopment: Bool {
         return host.lowercased().contains("localhost") || host == "127.0.0.1"

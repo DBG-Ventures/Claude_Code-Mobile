@@ -8,6 +8,37 @@
 
 import Foundation
 import Security
+import Observation
+
+// MARK: - Keychain Protocol
+
+protocol KeychainManagerProtocol: AnyObject {
+    func save(_ data: Data, for key: KeychainManager.KeychainKey) throws
+    func load(key: KeychainManager.KeychainKey) throws -> Data
+    func delete(key: KeychainManager.KeychainKey) throws
+    func exists(key: KeychainManager.KeychainKey) -> Bool
+
+    func saveString(_ string: String, for key: KeychainManager.KeychainKey) throws
+    func loadString(key: KeychainManager.KeychainKey) throws -> String
+
+    func saveCodable<T: Codable>(_ object: T, for key: KeychainManager.KeychainKey) throws
+    func loadCodable<T: Codable>(_ type: T.Type, key: KeychainManager.KeychainKey) throws -> T
+
+    func saveAPIKey(_ apiKey: String) throws
+    func loadAPIKey() -> String?
+    func saveBackendURL(_ url: URL) throws
+    func loadBackendURL() -> URL?
+    func saveBackendConfig(_ config: BackendConfig) throws
+    func loadBackendConfig() -> BackendConfig?
+    func saveUserId(_ userId: String) throws
+    func loadUserId() -> String?
+    func saveSessionToken(_ token: String) throws
+    func loadSessionToken() -> String?
+    func clearSessionToken()
+    func clearAllCredentials()
+    func hasStoredCredentials() -> Bool
+    func migrateFromUserDefaults()
+}
 
 // MARK: - Keychain Error
 
@@ -34,9 +65,8 @@ enum KeychainError: LocalizedError {
 // MARK: - Keychain Manager
 
 @MainActor
-class KeychainManager {
-    static let shared = KeychainManager()
-
+@Observable
+final class KeychainManager: KeychainManagerProtocol {
     // Keychain identifiers
     private let serviceIdentifier = "com.visionforge.claudecode"
     private let accessGroup: String? = nil  // Use default access group
@@ -51,7 +81,7 @@ class KeychainManager {
         case activeConfigId = "active_config_id"
     }
 
-    private init() {}
+    init() {}
 
     // MARK: - Generic Storage Methods
 
@@ -262,17 +292,17 @@ class KeychainManager {
 
 extension BackendConfig {
     // Save this configuration securely
-    @MainActor func saveToKeychain() throws {
-        try KeychainManager.shared.saveBackendConfig(self)
+    @MainActor func saveToKeychain(using keychainManager: KeychainManagerProtocol) throws {
+        try keychainManager.saveBackendConfig(self)
     }
 
     // Load configuration from keychain
-    @MainActor static func loadFromKeychain() -> BackendConfig? {
-        return KeychainManager.shared.loadBackendConfig()
+    @MainActor static func loadFromKeychain(using keychainManager: KeychainManagerProtocol) -> BackendConfig? {
+        return keychainManager.loadBackendConfig()
     }
 
     // Check if a configuration exists in keychain
-    @MainActor static var hasStoredConfiguration: Bool {
-        return KeychainManager.shared.hasStoredCredentials()
+    @MainActor static func hasStoredConfiguration(using keychainManager: KeychainManagerProtocol) -> Bool {
+        return keychainManager.hasStoredCredentials()
     }
 }

@@ -39,7 +39,7 @@ final class SessionLifecycleManager: SessionLifecycleManagerProtocol {
 
     // MARK: - Lifecycle Observers
 
-    private var appLifecycleObservers: [NSObjectProtocol] = []
+    private nonisolated(unsafe) var appLifecycleObservers: [NSObjectProtocol] = []
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
 
     // MARK: - Configuration
@@ -61,9 +61,11 @@ final class SessionLifecycleManager: SessionLifecycleManagerProtocol {
     }
 
     deinit {
-        Task { @MainActor in
-            cleanup()
+        // Remove notification observers - this is the only critical cleanup that must happen synchronously
+        for observer in appLifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
+        // Note: Background task cleanup will happen when the app terminates naturally
     }
 
     // MARK: - Lifecycle Management

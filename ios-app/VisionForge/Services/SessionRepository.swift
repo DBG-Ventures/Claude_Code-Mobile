@@ -384,21 +384,27 @@ final class SessionRepository: SessionRepositoryProtocol {
         // Monitor Claude service using observation
         claudeServiceObserver?.cancel()
         claudeServiceObserver = Task { @MainActor in
-            while !Task.isCancelled {
-                withObservationTracking {
-                    // Track changes to ClaudeService properties
-                    self.sessionManagerStatus = claudeService.sessionManagerConnectionStatus
+            // Initialize current values
+            self.sessionManagerStatus = claudeService.sessionManagerConnectionStatus
+            if let stats = claudeService.sessionManagerStats {
+                self.handleSessionManagerStatsUpdate(stats)
+            }
 
-                    if let stats = claudeService.sessionManagerStats {
-                        self.handleSessionManagerStatsUpdate(stats)
-                    }
-                } onChange: {
-                    Task { @MainActor in
-                        // Update will happen on next iteration
+            while !Task.isCancelled {
+                // Use withObservationTracking only once per change, avoiding tight polling loop
+                await withCheckedContinuation { continuation in
+                    withObservationTracking {
+                        // Track changes to ClaudeService properties
+                        self.sessionManagerStatus = claudeService.sessionManagerConnectionStatus
+
+                        if let stats = claudeService.sessionManagerStats {
+                            self.handleSessionManagerStatsUpdate(stats)
+                        }
+                    } onChange: {
+                        // Resume continuation when changes are detected
+                        continuation.resume()
                     }
                 }
-
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
         }
 

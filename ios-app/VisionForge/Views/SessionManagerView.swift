@@ -21,9 +21,9 @@ struct SessionManagerView: View {
     @State private var searchText: String = ""
     
     // MARK: - Body
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 // Background
                 Color(.systemGroupedBackground)
@@ -396,7 +396,7 @@ struct NewSessionSheet: View {
     @State private var selectedPreset = 0
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 // Error message if any
                 if let errorMessage = errorMessage {
