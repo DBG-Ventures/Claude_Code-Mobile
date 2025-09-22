@@ -13,8 +13,8 @@ Read the README.md file if it exists to get an understanding of the project.
 Read the main project PRP to get and an understanding of the project goals and current status
 
 Read key files in the following directories:
-backend/
-ios-app/VisionForge - MUST USE swift-code-reviewer agent
+backend - MUST USE python-project-analyzer agent
+ios-app/VisionForge - MUST USE ios-project-analyzer agent
 
 Explain back to me:
 - Project structure
